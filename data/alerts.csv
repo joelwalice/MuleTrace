@@ -1,0 +1,14 @@
+account_id,txn_id,ts,score,severity,pattern,reasons,amount,status,assigned_to,created_at,alert_id
+AC0509,TX0009324,2026-10-14 09:00:00,0.99,high,passthrough+dormant,"Received ₹3,90,000 and sent ₹3,57,328 onward within 30 min; Dormant 798 days, then ₹3,90,000",390000,new,,2026-10-16 09:00:00,AL-101
+AC0513,TX0009667,2026-10-15 09:00:00,0.99,high,passthrough+fan_in_out+shared_device,"Received ₹61,827 and sent ₹51,667 onward within 30 min; 8 senders and 8 receivers within 1h; Device shared with 8 other accounts",54385.99,new,,2026-10-16 09:00:00,AL-102
+AC0523,TX0009683,2026-10-15 09:40:00,0.99,high,passthrough+shared_device,"Received ₹51,667 and sent ₹48,947 onward within 30 min; Device shared with 8 other accounts",51666.69,new,,2026-10-16 09:00:00,AL-103
+AC0524,TX0009685,2026-10-15 09:42:00,0.99,high,passthrough+shared_device,"Received ₹52,718 and sent ₹49,943 onward within 30 min; Device shared with 8 other accounts",52718.09,new,,2026-10-16 09:00:00,AL-104
+AC0525,TX0009687,2026-10-15 09:44:00,0.99,high,passthrough+shared_device,"Received ₹58,736 and sent ₹55,644 onward within 30 min; Device shared with 8 other accounts",58735.51,new,,2026-10-16 09:00:00,AL-105
+AC0529,TX0009693,2026-10-15 09:52:00,0.99,high,passthrough+shared_device,"Received ₹65,388 and sent ₹61,947 onward within 30 min; Device shared with 8 other accounts",65388.23,new,,2026-10-16 09:00:00,AL-106
+AC0530,TX0009694,2026-10-15 09:54:00,0.99,high,passthrough+shared_device,"Received ₹60,985 and sent ₹57,776 onward within 30 min; Device shared with 8 other accounts",60985.25,new,,2026-10-16 09:00:00,AL-107
+AC0527,TX0009690,2026-10-15 09:48:00,0.98,high,passthrough+shared_device,"Received ₹75,811 and sent ₹71,821 onward within 30 min; Device shared with 8 other accounts",75811.36,new,,2026-10-16 09:00:00,AL-108
+AC0526,TX0009689,2026-10-15 09:46:00,0.96,high,passthrough+shared_device,"Received ₹82,550 and sent ₹78,205 onward within 30 min; Device shared with 8 other accounts",82550.08,new,,2026-10-16 09:00:00,AL-109
+AC0528,TX0009691,2026-10-15 09:50:00,0.96,high,passthrough+shared_device,"Received ₹73,623 and sent ₹69,748 onward within 30 min; Device shared with 8 other accounts",73622.85,new,,2026-10-16 09:00:00,AL-110
+AC0511,TX0009336,2026-10-14 09:23:00,0.89,high,passthrough,"Received ₹3,40,970 and sent ₹3,19,912 onward within 30 min",340969.89,new,,2026-10-16 09:00:00,AL-111
+AC0500,TX0008976,2026-10-13 09:00:00,0.87,high,structuring,"12 deposits of ₹45,000-₹49,999 within 24h, just under the reporting threshold",47543.42,new,,2026-10-16 09:00:00,AL-112
+AC0510,TX0009332,2026-10-14 09:10:00,0.85,high,passthrough,"Received ₹3,57,328 and sent ₹3,40,970 onward within 30 min",357327.83,new,,2026-10-16 09:00:00,AL-113

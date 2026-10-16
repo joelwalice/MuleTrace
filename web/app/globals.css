@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+/* Tactical telemetry console (industrial-brutalist-ui, terminal mode; dark substrate only).
+   Layout: blueprint grid. Zones are separated by 1px grid gaps over the line colour, never by cards or shadows.
+   Colour: white phosphor on a dead CRT, hazard red as the ONLY accent, terminal green for exactly one readout
+   (stream link status). Risk is an ordinal one-hue red ramp, validated with dataviz validate_palette.js --ordinal.
+   Type: Archivo Black for macro numerals and IDs, IBM Plex Mono uppercase for telemetry, Plex Sans only for prose. */
+:root {
+  color-scheme: dark;
+  --bg: #0a0a0a;
+  --panel: #111111;
+  --raised: #1a1a1a;
+  --line: #262626;
+  --line-hi: #444444;
+  --ink: #eaeaea;
+  --ink-2: #c4c4c4;
+  --muted: #949494;  /* ≥ 5.7:1 on every surface (WCAG AA for small text) */
+  --red: #ff2a2a;
+  --green: #4af626;
+  --edge: #4a4a4a;
+  --risk-0: #842a2a;
+  --risk-1: #b82c2c;
+  --risk-2: #ec3a30;
+  --risk-3: #ff9282;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-line-hi: var(--line-hi);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-red: var(--red);
+  --color-green: var(--green);
+  --font-sans: var(--font-plex-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: var(--font-archivo-black), "Arial Black", Impact, sans-serif;
+  --animate-enter: enter 0.35s steps(4, end) both;
+  --animate-shimmer: shimmer 1.2s steps(3, end) infinite;
+}
+
+@keyframes enter { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+@keyframes shimmer { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.8; } }
+@keyframes blink { 50% { opacity: 0; } }
+@keyframes sweep { to { transform: rotate(360deg); } }
+
+html, body { height: 100%; background: var(--bg); color: var(--ink); }
+html { -webkit-tap-highlight-color: transparent; }
+@media (pointer: fine) { html { overscroll-behavior: none; } }
+body { font-family: var(--font-mono); font-size: 14px; line-height: 1.45; }
+a, button, [role="tab"], [role="radio"] { touch-action: manipulation; }
+*, *::before, *::after { border-radius: 0 !important; }  /* every corner is 90° */
+h1, h2, h3, h4 { text-wrap: balance; }
+* { scrollbar-width: thin; scrollbar-color: var(--line-hi) transparent; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+::selection { background: var(--red); color: var(--bg); }
+
+/* Telemetry type: small, uppercase, mechanically tracked. Source text stays Title Case for screen readers. */
+.tl { font-family: var(--font-mono); font-size: 12px; line-height: 1.4; letter-spacing: 0.04em; text-transform: uppercase; }
+/* Long messages read in normal case; uppercase is for short labels only */
+.msg { text-transform: none; letter-spacing: 0; }
+.macro { font-family: var(--font-display); text-transform: uppercase; letter-spacing: -0.04em; line-height: 0.85; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* Square block cursor for the live state */
+.cursor { display: inline-block; width: 0.6em; height: 1em; background: currentColor; vertical-align: -0.12em; animation: blink 1s steps(1) infinite; }
+.radar-sweep { transform-box: fill-box; transform-origin: center; animation: sweep 3s linear infinite; }
+
+/* Blueprint grid behind the money trail */
+.blueprint {
+  background-color: var(--panel);
+  background-image:
+    linear-gradient(var(--raised) 1px, transparent 1px),
+    linear-gradient(90deg, var(--raised) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: -1px -1px;
+}
+/* Hazard stripes mark an armed destructive action */
+.hazard { background: repeating-linear-gradient(-45deg, var(--red) 0 6px, transparent 6px 12px); }
+
+/* Analog degradation: scanlines + grain, fixed over everything, never interactive */
+.crt::before, .crt::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 60; }
+.crt::before { background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(0, 0, 0, 0.08) 2px 4px); }
+.crt::after {
+  opacity: 0.035; mix-blend-mode: screen;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+@media (prefers-contrast: more), (forced-colors: active) { .crt::before, .crt::after { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  .cursor { animation: none; }
+}

@@ -14,7 +14,24 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cd web && npm install && npm run dev      # dashboard on http://localhost:3000
 ```
 
-Open http://localhost:3000. The bank is live straight away. Plant a mule ring from **Step 1** (keys 1–3), and open http://localhost:3000/send on a phone so judges can send their own transfers.
+Open http://localhost:3000. The bank is live straight away. Plant a mule ring from **Step 1** (keys 1–3). For judges' phones, see **Judge phones** below: a phone can't reach `localhost`.
+
+**Windows (PowerShell):**
+```
+python -m venv .venv; .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+$env:PYTHONUTF8='1'; .\.venv\Scripts\python.exe -m uvicorn app:app --reload   # API on :8000
+cd web; npm install; npm run dev                                               # dashboard on :3000
+```
+`PYTHONUTF8=1` keeps the ₹ sign from crashing Python's console output.
+
+### Judge phones
+```
+powershell -ExecutionPolicy Bypass -File demo-lan.ps1      # add -Ip <address> to pick one, -SkipBuild to reuse the build
+```
+It finds the laptop's Wi-Fi address, bakes it into the dashboard (`NEXT_PUBLIC_API`), allows it in `CORS_ORIGINS`, builds, and serves both on all interfaces. Then phones open `http://<laptop-ip>:3000/send`, and **More → Judge Phone QR Code** shows that address.
+- Phones must be on the same Wi-Fi. Venue Wi-Fi often isolates clients, so the laptop's own hotspot is the safer plan.
+- On first run Windows asks to let Python and Node through the firewall: allow **Private** networks.
+- It uses the production build on purpose. `npm run dev` blocks its own scripts for hosts other than localhost, so `/send` on a phone would load but never respond.
 
 | Setting | Where | Default | What it does |
 |---|---|---|---|
@@ -87,7 +104,7 @@ Open http://localhost:3000. The bank is live straight away. Plant a mule ring fr
    - **Policy:** turn off Structuring → Replay → "a ring would be missed" → Defaults.
 8. **Dismantle Ring → Lock N Accounts.** Sources go to review, and Teams and Planner fire. Then **File STR** (acknowledgement number) → **Close**. **Cases** shows the audit trail.
 9. **Human in the loop:** on an account the AI over-scores, press **Not a Mule**, then **Cases → Retrain Model v1 → v2**. The score updates, and the panel says "LightGBM v2".
-10. **Credibility:** IBM AML results (below), and the model card (`GET /ai/model`).
+10. **Credibility:** IBM AML results (below): the classifier retrained on IBM history gets 7.7× lift where the rules get 1.7×. Then the model card (`GET /ai/model`).
 
 ## Claims you can defend
 
@@ -98,17 +115,29 @@ Open http://localhost:3000. The bank is live straight away. Plant a mule ring fr
 | "STR draft in one click" | "Replaces the analyst" |
 | "The Copilot can't calculate. It quotes the rules engine and cites transaction IDs" | "AI detects the mules" |
 | "Says *insufficient evidence* when the data doesn't support a conclusion" | "Never wrong" |
+| "On IBM's public data, the classifier retrained on earlier days finds 7.7× more laundering than chance on later days" | "The rules work on any bank's data" (on IBM they reach 0.9–1.7×) |
 | IBM AML precision / recall / lift from `eval_ibm.py` | Accuracy on our own synthetic data (we planted those rings) |
 
 ## Judge Q&A
 
-- **"You planted the rings."** Yes, for the demo. On IBM's public AML dataset, which we didn't create, the same rules score: _fill in from eval_ibm.py_.
+- **"You planted the rings."** Yes, for the demo. On IBM's public AML dataset, which we didn't create, we trained the classifier on the first days and tested it on later days it never saw. With the same number of alerts (118), it caught 9 laundering accounts against the rules' 2: **7.7× lift over chance vs 1.7×**, AUC 0.68. The sample is small, and IBM has no KYC or device data.
+- **"So your rules don't work?"** They're tuned for Indian UPI mule patterns: minutes-long pass-through, shared phones, cash just under ₹50,000. IBM's synthetic US-style laundering waits hours and uses few counterparties, so the rules alone barely beat chance there. That's exactly why the classifier learns from analyst labels instead of fixed thresholds.
 - **"How is this different from RBI's MuleHunter.AI?"** MuleHunter flags individual mule accounts. MuleTrace starts after the flag: it groups the ring, traces the money, separates possible victims (sources) from mules, and produces the STR and freeze actions.
 - **"Why review sources instead of freezing them?"** The first account money comes from may be a fraud victim, and freezing a victim's account harms them twice.
-- **Indian thresholds:** structuring means repeated cash deposits just under ₹50,000, the PAN quoting threshold (Rule 114B). The STR is due to FIU-IND within 7 working days of forming suspicion (PML Rules). _Verify both against the official text before they go on a slide._
+- **Indian thresholds:** structuring means repeated cash deposits just under ₹50,000, the PAN quoting threshold under Rule 114B (more than ₹50,000 cash in one day). The STR is due to FIU-IND within 7 days of the Principal Officer establishing suspicion (PML Rules, Rule 8; FIU-IND says "working days", RBI circulars say "days").
+  - **Check before slides:** news reports say the Income-tax Rules, 2026 (from 1 April 2026) replaced Rule 114B's daily ₹50,000 test with an annual ₹10 lakh aggregate. If the official text confirms it, say "the long-standing ₹50,000 PAN threshold" rather than "the PAN threshold". See `TODO.md`.
 
 ## Evaluation on public data
 
+**Quickest (no Kaggle token needed, any OS):**
+```
+pip install kagglehub
+python -c "import kagglehub as k; [k.dataset_download('ealtman2019/ibm-transactions-for-anti-money-laundering-aml', path=f, output_dir='data/ibm') for f in ('HI-Small_Trans.csv','HI-Small_Patterns.txt')]"
+python eval_ibm.py data/ibm/HI-Small_Trans.csv --limit 2500000 --patterns data/ibm/HI-Small_Patterns.txt --ai --out data/eval.json
+```
+`--ai` also trains the classifier on the earliest 65% of transactions and tests it on the rest, at the same alert budget as the rules. 2.5M rows need about 3 GB of free RAM and take about 30 s. `data/ibm/` (454 MB) is git-ignored; `data/eval.json` is committed so the card shows on any laptop.
+
+**With the Kaggle CLI:**
 1. **Get a token:** kaggle.com → Settings → API → **Create New Token**. That downloads `kaggle.json`; then run `mkdir -p ~/.kaggle && mv ~/Downloads/kaggle.json ~/.kaggle/ && chmod 600 ~/.kaggle/kaggle.json`.
 2. **Download and score:**
 ```
@@ -119,6 +148,8 @@ unzip -o '*.zip'; cd ../..
 python3 eval_ibm.py data/ibm/HI-Small_Trans.csv --limit 1000000 --patterns data/ibm/HI-Small_Patterns.txt --out data/eval.json
 ```
 The dashboard card and `GET /evaluation` pick up `data/eval.json` on the next page load.
+
+**Result (17 Oct, first 2.5M rows):** rules 0.9× lift on all accounts, 12 of 260 laundering attempts touched. Classifier retrained on IBM: AUC 0.68, 7.7× lift vs the rules' 1.7× at 118 alerts. The classifier trained only on synthetic data scores AUC 0.60 on the same test days.
 
 The script uses USD rows only, with USD thresholds (the US $10,000 reporting rule). `--patterns` scores IBM's whole laundering attempts: an attempt counts as caught when at least one of its accounts is flagged. The dataset has no device data, so shared-device detection is off. It reports precision, recall and **lift** (precision divided by the base rate of laundering accounts).
 

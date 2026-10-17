@@ -1,8 +1,6 @@
 # MuleTrace: Investigation Copilot Plan
 
-Status: **P0–P2 built, 17 Oct 2026.** CSV upload was cut, because `/ingest` already covers incoming data. Still waiting on the user:
-- the IBM run (Kaggle token)
-- creating the Copilot Studio agent (Microsoft sign-in plus a Dev Tunnel)
+Status: **P0–P2 built, 17 Oct 2026.** CSV upload was cut, because `/ingest` already covers incoming data. The IBM run is done (`context.md` item 16). Still waiting on sign-ins: the Copilot Studio agent, Power Automate, and the Foundry endpoint. **What's left is in [`TODO.md`](TODO.md).**
 
 See `microsoft/README.md`. Demo day is 18 Oct.
 Sources: the two DeepSeek threads (the "which idea wins" verdict and the "go" build pack), checked against this repo.

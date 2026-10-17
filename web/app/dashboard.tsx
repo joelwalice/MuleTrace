@@ -1,19 +1,21 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AiPanel, CasesSheet, Checklist, CopilotSheet, EvidenceView, PolicySheet, QrSheet, Verdict, isDefaultPolicy } from "./evidence";
 import MoneyGraph, { ROLE_TEXT } from "./graph";
 import {
-  API, ATTACKS, PATTERN, RISK_BANDS, clock, compactInr, day, get, inr, num, playbookNote, post, riskBand, when,
-  type Alert, type Attack, type Case, type Detail, type Graph, type Network, type Profile, type Sel, type Sev, type Snapshot,
+  API, ATTACKS, CASE_STATUS, COPILOT_URL, PATTERN, RISK_BANDS, clock, compactInr, day, get, inr, num, playbookNote, post, riskBand, when,
+  type AiExplanation, type Alert, type Attack, type Case, type Detail, type Evaluation, type Evidence, type Graph, type Network, type Policy,
+  type Profile, type Sel, type Sev, type Snapshot,
 } from "./lib";
-import { AccountLink, Barcode, Kbd, Locked, Nav, NavLink, Readout, RoleMark, SelLink, SevGlyph, SevTag, Skeleton, Tag, Tween } from "./ui";
+import { AccountLink, Kbd, Locked, Nav, NavLink, RoleMark, SelLink, SevGlyph, SevTag, Skeleton, Tag, useTween } from "./ui";
 
+type SheetName = "policy" | "copilot" | "cases" | "qr";
 type Signal = { id: number; at: string; sev: Sev | "ok"; text: string };
 type Tab = "rings" | "graph" | "side";
-type Side = "feed" | "profile" | "signals";
+type Side = "feed" | "evidence" | "profile" | "signals";
 type View = "graph" | "table";
 type UrlState = { sel: Sel; acct: string | null; side: Side; view: View; tab: Tab };
-const SPEEDS = [1, 2, 5, 10];
-const SIDE_LABEL: Record<Side, string> = { feed: "Ledger", profile: "Account 360", signals: "Signals" };
+const SIDE_LABEL: Record<Side, string> = { feed: "Live Feed", evidence: "Evidence", profile: "Account", signals: "Log" };
 
 // The URL mirrors what's on screen, so any view can be shared, bookmarked or opened in a new tab.
 function toQuery(s: UrlState) {
@@ -32,7 +34,7 @@ function readQuery(): Partial<UrlState> {
   return {
     sel: ring ? { kind: "network", id: ring } : alert ? { kind: "alert", id: alert } : null,
     acct: q.get("acct"),
-    side: panel === "profile" || panel === "signals" ? panel : "feed",
+    side: panel === "profile" || panel === "signals" || panel === "evidence" ? panel : "feed",
     view: q.get("view") === "table" ? "table" : "graph",
     tab: tab === "rings" || tab === "side" ? tab : "graph",
   };
@@ -105,17 +107,25 @@ export default function Dashboard() {
   const selected = snap && sel
     ? sel.kind === "network" ? snap.networks.find((n) => n.network_id === sel.id) : snap.alerts.find((a) => a.alert_id === sel.id)
     : undefined;
-  const selSig = selected ? JSON.stringify(selected) + Math.floor((snap?.stats.transactions ?? 0) / 40) : "";
+  const selSig = selected ? JSON.stringify(selected) + Math.floor((snap?.stats.transactions ?? 0) / 40) + `v${snap?.model_version}` : "";
   const [detail, setDetail] = useState<Detail | null>(null);
   const [graph, setGraph] = useState<Graph | null>(null);
+  const [evidence, setEvidence] = useState<Evidence | null>(null);
   useEffect(() => {
-    if (!sel || !selSig) { setDetail(null); setGraph(null); return; }
+    if (!sel || !selSig) { setDetail(null); setGraph(null); setEvidence(null); return; }
     let live = true;
-    Promise.all([get<Detail>(`/${sel.kind}/${sel.id}`), get<Graph>(`/${sel.kind}/${sel.id}/graph`)])
-      .then(([d, g]) => { if (live) { setDetail(d); setGraph(g); } })
+    const base = `/${sel.kind}/${sel.id}`;
+    Promise.all([get<Detail>(base), get<Graph>(`${base}/graph`), get<Evidence>(`${base}/evidence`)])
+      .then(([d, g, ev]) => { if (live) { setDetail(d); setGraph(g); setEvidence(ev); } })
       .catch(() => {});
     return () => { live = false; };
   }, [sel, selSig]);
+  const evPending = !!sel && (!evidence || (sel.kind === "network" ? evidence.network_id !== sel.id || !!evidence.alert_id : evidence.alert_id !== sel.id));
+  const [cite, setCite] = useState<string[]>([]);
+  const [strOpen, setStrOpen] = useState(false);
+  const [sheet, setSheet] = useState<SheetName | null>(null);
+  const [bench, setBench] = useState<Evaluation | null>(null);
+  useEffect(() => { get<Evaluation>("/evaluation").then(setBench).catch(() => {}); }, []);
   // While the next selection loads, keep the previous one on screen, dimmed, instead of flashing empty.
   const detailPending = !!sel && (!detail || (sel.kind === "network" ? detail.network_id !== sel.id || !!detail.alert_id : detail.alert_id !== sel.id));
 
@@ -127,12 +137,14 @@ export default function Dashboard() {
     setAcct(detail.account_id ?? detail.alerted?.[0] ?? null);
   }, [detail]);
 
-  const acctSig = acct ? `${acct}:${Math.floor((snap?.stats.transactions ?? 0) / 25)}:${snap?.stats.frozen}` : "";
+  const acctSig = acct ? `${acct}:${Math.floor((snap?.stats.transactions ?? 0) / 25)}:${snap?.stats.frozen}:${snap?.model_version}` : "";
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [acctAi, setAcctAi] = useState<AiExplanation | null>(null);
   useEffect(() => {
-    if (!acct) { setProfile(null); return; }
+    if (!acct) { setProfile(null); setAcctAi(null); return; }
     let live = true;
     get<Profile>(`/account/${acct}`).then((p) => live && setProfile(p)).catch(() => {});
+    get<AiExplanation>(`/account/${acct}/ai`).then((a) => live && setAcctAi(a)).catch(() => live && setAcctAi(null));
     return () => { live = false; };
   }, [acct, acctSig]);
 
@@ -163,7 +175,7 @@ export default function Dashboard() {
     seenAttacks.current = ids;
   }, [snap, signal]);
 
-  const choose = useCallback((s: Sel) => { setSel(s); setTab("graph"); }, []);
+  const choose = useCallback((s: Sel) => { setSel(s); setTab("graph"); setSide("evidence"); }, []);
   const openAccount = useCallback((id: string) => { setAcct(id); setSide("profile"); setTab("side"); }, []);
 
   // Keyboard-first: Space play/pause, J/K next/previous ring, T graph/table.
@@ -196,10 +208,17 @@ export default function Dashboard() {
     setBusy(false);
   };
 
+  const caseAction = useCallback(async (id: string, a: "file_str" | "close") => {
+    try {
+      const c = await post<Case>(`/case/${id}/${a}`);
+      signal("ok", a === "file_str" ? `${id} · STR Filed With FIU-IND (Simulated) · Ack ${c.ack}` : `${id} · Case Closed`);
+    } catch { signal("high", `Couldn’t Update ${id} · It May Already Be at That Step`); }
+  }, [signal]);
+
   const nav = useMemo(() => ({
     openAccount, choose,
     hrefAccount: (id: string) => toQuery({ ...state, acct: id, side: "profile", tab: "side" }),
-    hrefSel: (s: Sel) => toQuery({ ...state, sel: s, tab: "graph" }),
+    hrefSel: (s: Sel) => toQuery({ ...state, sel: s, tab: "graph", side: "evidence" }),
   }), [openAccount, choose, state]);
 
   if (!snap) return conn === "offline" ? <Offline /> : <LoadingShell />;
@@ -208,52 +227,54 @@ export default function Dashboard() {
   return (
     <Nav.Provider value={nav}>
       <div className="flex h-dvh flex-col gap-px bg-line pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]">
-        <a href="#main" className="tl sr-only z-[70] bg-ink px-3 py-2 text-bg focus:not-sr-only focus:fixed focus:left-3 focus:top-3">Skip to Investigation</a>
-        <Header snap={snap} conn={conn} control={control} />
+        <a href="#main" className="tl sr-only z-[70] rounded-md bg-ink px-3 py-2 text-panel focus:not-sr-only focus:fixed focus:left-3 focus:top-3">Skip to Investigation</a>
+        <Header snap={snap} conn={conn} control={control} openSheet={setSheet} setAutopilot={setAutopilot} />
         <Ticker snap={snap} conn={conn} latest={signals[0]} />
-        <Summary snap={snap} />
+        <Summary snap={snap} bench={bench} />
         <main id="main" tabIndex={-1} className="grid min-h-0 flex-1 grid-cols-1 gap-px outline-none lg:grid-cols-[320px_minmax(0,1fr)_360px] xl:grid-cols-[344px_minmax(0,1fr)_404px]">
           <section className={`${panel("rings")} bg-bg`} aria-labelledby="rings-h">
-            <Rings snap={snap} sel={sel} launch={launch} setAutopilot={setAutopilot} />
+            <Rings snap={snap} sel={sel} launch={launch} />
           </section>
           <section className={`${panel("graph")} bg-panel`} aria-labelledby="trail-h">
             <GraphToolbar view={view} setView={setView} hasGraph={!!graph} />
             <div className={`relative min-h-[48dvh] flex-1 transition-opacity lg:min-h-[300px] duration-200 ${detailPending && graph ? "opacity-40" : ""}`} aria-busy={detailPending}>
-              <div className={view === "graph" ? "contents" : "hidden"}><MoneyGraph graph={graph} onNode={openAccount} /></div>
+              <div className={view === "graph" ? "contents" : "hidden"}><MoneyGraph graph={graph} onNode={openAccount} cite={side === "evidence" ? cite : undefined} /></div>
               {view === "table" && graph && <TrailTable graph={graph} />}
               {!graph && (sel ? <GraphSkeleton /> : <Watching snap={snap} />)}
-              {graph && view === "graph" && <GraphFrame id={sel?.id ?? ""} graph={graph} />}
+              {graph && view === "graph" && <GraphFrame />}
             </div>
-            {detail && sel ? <CasePanel detail={detail} kind={sel.kind} busy={busy} pending={detailPending} dismantle={dismantle} />
+            {detail && sel ? <CasePanel detail={detail} kind={sel.kind} busy={busy} pending={detailPending} dismantle={dismantle} str={strOpen} setStr={setStrOpen}
+              kase={snap.cases.find((c) => c.network_id === detail.network_id && sel.kind === "network")} act={caseAction} />
               : sel && <CaseSkeleton />}
           </section>
-          <section className={`${panel("side")} bg-bg`} aria-labelledby="side-h">
-            <h2 id="side-h" className="sr-only">Ledger, Account Profile and Signals</h2>
-            <div className="grid grid-cols-3 gap-px border-b border-line bg-line" role="tablist" aria-label="Side panel">
-              {(["feed", "profile", "signals"] as const).map((s) => (
+          <section className={`${panel("side")} bg-panel`} aria-labelledby="side-h">
+            <div className="border-b border-line bg-panel px-3 py-2.5"><Step n={4} id="side-h">Check the Evidence</Step></div>
+            <div className="grid grid-cols-4 gap-px border-b border-line bg-line" role="tablist" aria-label="Side panel">
+              {(["feed", "evidence", "profile", "signals"] as const).map((s) => (
                 <button key={s} id={`tab-${s}`} role="tab" aria-selected={side === s} aria-controls={`panel-${s}`} onClick={() => setSide(s)}
-                  className={`tl py-2.5 transition-colors ${side === s ? "bg-ink text-bg" : "bg-panel text-muted hover:text-ink"}`}>
-                  {SIDE_LABEL[s]}{s === "signals" && signals.length > 0 && <span className="num"> {String(signals.length).padStart(2, "0")}</span>}
+                  className={`tl bg-panel py-2.5 transition-colors ${side === s ? "text-ink shadow-[inset_0_-2px_0_var(--ink)]" : s === "evidence" && sel ? "text-red hover:text-ink" : "text-muted hover:text-ink"}`}>
+                  {SIDE_LABEL[s]}{s === "signals" && signals.length > 0 && <span className="num"> ({signals.length})</span>}
                 </button>
               ))}
             </div>
             <div id={`panel-${side}`} role="tabpanel" aria-labelledby={`tab-${side}`} className="flex min-h-0 flex-1 flex-col">
-              {side === "feed" ? <Feed snap={snap} /> : side === "profile" ? <ProfileView p={profile} acct={acct} /> : <Signals signals={signals} />}
+              {side === "feed" ? <Feed snap={snap} />
+                : side === "evidence" ? (sel ? <EvidenceView ev={evidence} pending={evPending} graph={graph} setCite={setCite} openStr={() => setStrOpen(true)} />
+                  : <p className="p-4 font-sans text-sm text-ink-2">Select a ring or an alert to see the evidence behind it: the figures the rules computed and the transactions they rest on.</p>)
+                : side === "profile" ? <ProfileView p={profile} acct={acct} ai={acctAi?.account_id === acct ? acctAi : null}
+                  setLabel={(v) => setProfile((p) => p && { ...p, label: v })} /> : <Signals signals={signals} />}
             </div>
           </section>
         </main>
-        <footer className="tl hidden items-center gap-5 bg-bg px-4 py-1.5 text-[11.5px] text-muted lg:flex">
-          <span className="flex items-center gap-1.5"><Kbd>Space</Kbd>Play / Pause</span>
-          <span className="flex items-center gap-1.5"><Kbd>J</Kbd><Kbd>K</Kbd>Next / Previous Ring</span>
-          <span className="flex items-center gap-1.5"><Kbd>T</Kbd>Graph / Table</span>
-          <span className="flex items-center gap-1.5"><Kbd>1</Kbd><Kbd>2</Kbd><Kbd>3</Kbd>Launch Attack</span>
-          <a href="/send" target="_blank" rel="noopener" className="text-ink underline-offset-2 hover:text-red hover:underline">Send a Transfer ↗</a>
-          <span className="ml-auto" translate="no">API {API.replace(/^https?:\/\//, "")} · SSE Stream · Synthetic Bank, Live Feed</span>
-        </footer>
+        {sheet === "policy" && <PolicySheet policy={snap.policy} onClose={() => setSheet(null)}
+          onApplied={(p: Policy) => signal("ok", `Policy Applied · ${p.rules.length} of 5 Rules On · Pass-Through ${Math.round(p.pass_ratio * 100)}% · Structuring From ${inr(p.band_floor)}`)} />}
+        {sheet === "copilot" && <CopilotSheet onClose={() => setSheet(null)} prompts={copilotPrompts(sel, detail)} />}
+        {sheet === "cases" && <CasesSheet snap={snap} onClose={() => setSheet(null)} act={caseAction} />}
+        {sheet === "qr" && <QrSheet onClose={() => setSheet(null)} />}
         <nav className="grid grid-cols-3 gap-px bg-line pb-[env(safe-area-inset-bottom,0px)] lg:hidden" aria-label="Sections">
-          {([["rings", `Rings ${String(snap.stats.networks).padStart(2, "0")}`], ["graph", "Trail"], ["side", "Ledger & 360"]] as const).map(([t, label]) => (
+          {([["rings", `Rings (${snap.stats.networks})`], ["graph", "Money Trail"], ["side", "Evidence & Feed"]] as const).map(([t, label]) => (
             <NavLink key={t} href={toQuery({ ...state, tab: t })} onNavigate={() => setTab(t)} aria-current={tab === t ? "page" : undefined}
-              className={`tl py-3 text-center transition-colors ${tab === t ? "bg-ink text-bg" : "bg-panel text-muted"}`}>{label}</NavLink>
+              className={`tl bg-panel py-3 text-center transition-colors ${tab === t ? "text-ink shadow-[inset_0_2px_0_var(--ink)]" : "text-muted"}`}>{label}</NavLink>
           ))}
         </nav>
       </div>
@@ -305,100 +326,178 @@ function Offline() {
   );
 }
 
-function Header({ snap, conn, control }: { snap: Snapshot; conn: string; control: (a: "play" | "pause" | "reset", s?: number) => void }) {
-  const [armed, setArmed] = useState(false);
-  useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), 4000); return () => clearTimeout(t); }, [armed]);
+function copilotPrompts(sel: Sel, d: Detail | null) {
+  if (!sel) return ["Which ring has the most money in it?", "List the open rings", "How does MuleTrace score on the IBM benchmark?"];
+  const ring = d?.network_id ?? sel.id;
+  const pair = sel.kind === "network" ? d?.alerted?.slice(0, 2) : d?.account_id && [d.account_id, ...(d.lateral ?? d.upstream ?? [])].slice(0, 2);
+  return [
+    sel.kind === "alert" ? `Why is ${sel.id} suspicious?` : `Explain ring ${ring}`,
+    `Trace the money in ${ring}`,
+    ...(pair && pair.length === 2 ? [`Why are ${pair[0]} and ${pair[1]} connected?`] : []),
+    `Draft the STR for ${ring} and list what's missing`,
+  ];
+}
+
+type Control = (a: "play" | "pause" | "reset", s?: number) => void;
+function Header({ snap, conn, control, openSheet, setAutopilot }:
+  { snap: Snapshot; conn: string; control: Control; openSheet: (s: SheetName) => void; setAutopilot: (on: boolean) => void }) {
+  const btn = "tl bg-bg px-3 py-2 text-ink transition-colors hover:bg-raised";
   return (
-    <header className="flex flex-wrap items-center gap-x-6 gap-y-2 bg-bg px-4 pb-2.5 pt-[max(10px,env(safe-area-inset-top,0px))]">
-      <div className="flex items-baseline gap-4">
+    <header className="flex flex-wrap items-center gap-x-6 gap-y-2 bg-panel px-4 pb-2.5 pt-[max(10px,env(safe-area-inset-top,0px))]">
+      <div className="flex min-w-0 items-baseline gap-4">
         <Wordmark as="h1" />
-        <span className="tl hidden text-muted xl:inline">AML / Mule-Ring Telemetry · FIU-IND</span>
+        <span className="hidden truncate font-sans text-[14px] text-ink-2 lg:inline">Catches money-mule rings in a live bank, and shows the evidence.</span>
       </div>
       <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-2">
-        <span className="tl flex items-center gap-2" aria-live="polite">
-          {conn === "live" ? <span className="text-green">● Link</span> : <span className="text-red">○ No Link</span>}
-          <span className={snap.running ? "text-red" : "text-ink-2"}>{snap.running ? <>Live <span className="cursor" aria-hidden /></> : "Feed Paused"}</span>
+        <span className="tl flex items-center gap-2.5" aria-live="polite">
+          {conn !== "live" ? <span className="text-red">○ Offline</span>
+            : snap.running ? <span className="flex items-center gap-1.5 text-red"><span className="live-dot" aria-hidden />Live</span> : <span className="text-ink-2">Paused</span>}
+          <time className="num text-ink-2" dateTime={snap.clock} title={`Bank clock, running at ${snap.speed}× real time`}>{when(snap.clock)}</time>
         </span>
-        <time className="tl num text-ink" dateTime={snap.clock} title={`Bank clock, running at ${snap.speed}× real time`}>T {when(snap.clock)}</time>
-        <span className="tl num hidden text-ink-2 md:inline" title="Ordinary customer transactions per real second, plus queued attack transfers">
-          {snap.feed_rate} Tx/s{snap.queued > 0 && <span className="text-red"> · {snap.queued} Queued</span>}
-        </span>
-        <div className="flex items-center gap-px bg-line">
-          <button onClick={() => control(snap.running ? "pause" : "play")} title="Shortcut: Space" aria-keyshortcuts="Space"
-            className="tl bg-ink px-3.5 py-2 font-semibold text-bg transition-[background-color,transform] hover:bg-red active:translate-y-px">
-            <span aria-hidden>{snap.running ? "❚❚ " : "▶ "}</span>{snap.running ? "Pause Feed" : "Go Live"}
+        <div className="flex gap-1.5">
+          <button onClick={() => control(snap.running ? "pause" : "play")} title="Shortcut: Space" aria-keyshortcuts="Space" className={btn}>
+            {snap.running ? "Pause" : "Resume"}
           </button>
-          <div className="flex gap-px" role="radiogroup" aria-label="Bank clock speed">
-            {snap.speeds.map((s) => (
-              <button key={s} role="radio" aria-checked={snap.speed === s} aria-label={`Bank clock at ${s} times real time`} onClick={() => control(snap.running ? "play" : "pause", s)}
-                className={`tl num px-2.5 py-2 transition-colors ${snap.speed === s ? "bg-raised text-ink" : "bg-bg text-muted hover:text-ink"}`}>{s}×</button>
-            ))}
-          </div>
-          <button onClick={() => { if (armed) { setArmed(false); control("reset"); } else setArmed(true); }}
-            className={`tl px-3 py-2 transition-colors active:translate-y-px ${armed ? "bg-red font-semibold text-bg" : "bg-bg text-ink-2 hover:text-red"}`}
-            title="Starts a fresh bank: clears rings, cases and signals">
-            {armed ? "Confirm New Bank" : "New Bank"}
+          <button onClick={() => openSheet("cases")} className={btn} title="Cases after dismantling, and the analyst feedback that retrains the AI">
+            Cases{snap.cases.length > 0 && <span className="num"> ({snap.cases.length})</span>}
           </button>
+          <button onClick={() => openSheet("policy")} className={btn} title="Tune the detection rules and replay them on today's data">
+            Rules{!isDefaultPolicy(snap.policy) && <span className="text-red"> · Custom</span>}
+          </button>
+          {COPILOT_URL && (
+            <button onClick={() => openSheet("copilot")} className="tl bg-ink px-3 py-2 font-semibold text-bg transition-colors hover:bg-red">Ask Copilot</button>
+          )}
+          <More snap={snap} control={control} setAutopilot={setAutopilot} openQr={() => openSheet("qr")} />
         </div>
       </div>
     </header>
   );
 }
 
+/* Secondary controls: clock speed, reset, the judge page and shortcuts. Out of the way of a first-time viewer. */
+function More({ snap, control, setAutopilot, openQr }: { snap: Snapshot; control: Control; setAutopilot: (on: boolean) => void; openQr: () => void }) {
+  const [armed, setArmed] = useState(false);
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), 4000); return () => clearTimeout(t); }, [armed]);
+  useEffect(() => {
+    const close = (e: Event) => { if (ref.current?.open && !ref.current.contains(e.target as Node)) ref.current.open = false; };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape" && ref.current) ref.current.open = false; };
+    document.addEventListener("pointerdown", close); document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", esc); };
+  }, []);
+  const row = "flex items-center justify-between gap-3 px-3 py-2";
+  return (
+    <details ref={ref} className="relative rounded-md bg-bg">
+      <summary className="tl cursor-pointer list-none px-3 py-2 text-ink-2 transition-colors hover:text-ink [&::-webkit-details-marker]:hidden">More <span aria-hidden>▾</span></summary>
+      <div className="tl absolute right-0 top-full z-50 mt-1.5 grid w-72 gap-px overflow-hidden rounded-lg border border-line-hi bg-line shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
+        <div className={`${row} bg-panel`}>
+          <span className="text-muted">Clock Speed</span>
+          <div className="flex gap-1.5" role="radiogroup" aria-label="Bank clock speed">
+            {snap.speeds.map((s) => (
+              <button key={s} role="radio" aria-checked={snap.speed === s} aria-label={`Bank clock at ${s} times real time`} onClick={() => control(snap.running ? "play" : "pause", s)}
+                className={`num px-2 py-1 transition-colors ${snap.speed === s ? "bg-ink text-panel" : "bg-bg text-muted hover:text-ink"}`}>{s}×</button>
+            ))}
+          </div>
+        </div>
+        <button role="switch" aria-checked={snap.autopilot} onClick={() => setAutopilot(!snap.autopilot)} className={`${row} bg-panel text-left text-ink hover:bg-raised`}>
+          Autopilot<span className={snap.autopilot ? "text-red" : "text-muted"}>{snap.autopilot ? "On · Every 1–2 Min" : "Off"}</span>
+        </button>
+        <button onClick={() => { if (ref.current) ref.current.open = false; openQr(); }} className={`${row} bg-panel text-left text-ink hover:bg-raised`}>Judge Phone QR Code<span aria-hidden>▦</span></button>
+        <button onClick={() => { if (armed) { setArmed(false); control("reset"); } else setArmed(true); }}
+          className={`${row} text-left transition-colors ${armed ? "bg-red font-semibold text-bg" : "bg-panel text-ink-2 hover:text-red"}`}>
+          {armed ? "Confirm: Start a New Bank" : "New Bank"}<span className="msg font-sans text-[12px] opacity-80">{armed ? "" : "Clears everything"}</span>
+        </button>
+        <div className="grid gap-1.5 bg-panel px-3 py-2.5 text-[11.5px] text-ink-2">
+          <span className="text-muted">Keyboard</span>
+          <span className="flex items-center gap-1.5"><Kbd>1</Kbd><Kbd>2</Kbd><Kbd>3</Kbd>Plant a Ring</span>
+          <span className="flex items-center gap-1.5"><Kbd>J</Kbd><Kbd>K</Kbd>Next / Previous Ring</span>
+          <span className="flex items-center gap-1.5"><Kbd>T</Kbd>Graph / Table · <Kbd>Space</Kbd>Pause</span>
+        </div>
+      </div>
+    </details>
+  );
+}
+
 function Ticker({ snap, conn, latest }: { snap: Snapshot; conn: string; latest?: Signal }) {
   return (
-    <div className="tl flex min-w-0 items-center gap-3 bg-panel px-4 py-2" role="status" aria-live="polite">
-      <span className="shrink-0 text-red" aria-hidden>&gt;&gt;&gt;</span>
+    <div className="tl flex min-w-0 items-center gap-3 bg-bg px-4 py-2" role="status" aria-live="polite">
+      <span className="eyebrow shrink-0">Latest</span>
       {conn === "offline" ? <span className="truncate text-red">Stream Lost · Retrying Automatically… Figures Shown Are From the Last Update</span>
         : latest ? <span className="flex min-w-0 gap-3">
             <span className="num shrink-0 text-muted">{clock(latest.at || snap.clock)}</span>
             {latest.sev === "ok" ? <span aria-hidden className="text-ink">■</span> : <SevGlyph sev={latest.sev} />}
             <span className="msg truncate text-ink">{latest.text}</span>
           </span>
-        : <span className="truncate text-muted">{snap.running ? "Feed Live · Launch an Attack From the Red Team Console, or Send a Transfer at /send" : "Feed Paused · Press Go Live to Resume"}</span>}
+        : <span className="truncate text-muted">{snap.running ? "Live Bank Running · Press 1, 2 or 3 to Plant a Mule Ring, Then Watch It Get Caught" : "Feed Paused · Press Go Live to Resume"}</span>}
     </div>
   );
 }
 
-function Summary({ snap }: { snap: Snapshot }) {
+/* The engine as a pipeline a viewer reads left to right: every transfer is checked, a few raise alerts,
+   alerts collapse into rings (the pitch), and rings get locked. */
+function Summary({ snap, bench }: { snap: Snapshot; bench: Evaluation | null }) {
   const s = snap.stats;
-  const hourAgo = (i: number) => (snap.hourly.length - 1 - i === 0 ? "txn · latest hour" : `txn · ${snap.hourly.length - 1 - i}h ago`);
   return (
-    <section aria-label="Summary" className="flex snap-x gap-px overflow-x-auto overscroll-x-contain *:shrink-0 *:snap-start lg:grid lg:grid-cols-[minmax(340px,1.5fr)_repeat(3,minmax(0,1fr))] lg:*:shrink">
-      <div className="bg-bg px-4 py-3">
-        <div className="tl text-muted"><span aria-hidden>[ </span>Alerts → Rings<span aria-hidden> ]</span></div>
-        <div className="mt-2 flex items-end gap-3 text-ink">
-          <span className="macro text-[clamp(3.25rem,6vw,5.75rem)]"><Tween value={s.alerts} pad={2} /></span>
-          <span className="macro pb-1 text-[clamp(1.5rem,2.6vw,2.5rem)] text-red" aria-hidden>→</span>
-          <span className="sr-only">alerts grouped into</span>
-          <span className="macro text-[clamp(3.25rem,6vw,5.75rem)]"><Tween value={s.networks} pad={2} /></span>
-          <span className="tl pb-1.5 text-muted">{s.networks === 1 ? "Ring" : "Rings"}</span>
-        </div>
-      </div>
-      <Readout label="Txn Screened" value={s.transactions} note="Per Hour · 48h"
-        trend={<Barcode data={snap.hourly} label="Transactions per hour" unit={hourAgo} />} />
-      <Readout label="Money Into Rings" value={s.total_in} fmt={compactInr} note="From Source Accounts" />
-      <Readout label="Accounts Locked" value={s.frozen} fmt={(v) => num(v).padStart(2, "0")} note={`${String(s.cases).padStart(2, "0")} ${s.cases === 1 ? "Case" : "Cases"} Opened`} />
+    <section aria-label="What MuleTrace found" className={`flex snap-x gap-px overflow-x-auto overscroll-x-contain *:shrink-0 *:snap-start lg:grid lg:*:shrink ${bench?.status === "ok" ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}>
+      <Stage label="Transfers Checked" value={s.transactions} note="Every one runs through 5 rules" />
+      <Stage label="Alerts Raised" value={s.alerts} note="Accounts a rule flagged" arrow />
+      <Stage label="Mule Rings" value={s.networks} hot arrow
+        note={s.networks ? `Alerts grouped by shared money · ${compactInr(s.total_in)} in` : "Alerts grouped by shared money or devices"} />
+      <Stage label="Accounts Locked" value={s.frozen} arrow note={s.cases ? `${s.cases} ${s.cases === 1 ? "case" : "cases"} opened` : "After an analyst dismantles a ring"} />
+      {bench?.status === "ok" && <Bench e={bench} />}
     </section>
   );
 }
 
-function RedTeam({ snap, launch, setAutopilot }: { snap: Snapshot; launch: (k: Attack["kind"]) => void; setAutopilot: (on: boolean) => void }) {
+function Stage({ label, value, note, arrow, hot }: { label: string; value: number; note: string; arrow?: boolean; hot?: boolean }) {
+  const v = useTween(value);
+  return (
+    <div className={`min-w-[190px] bg-panel px-4 py-3 ${hot ? "shadow-[inset_0_-3px_0_var(--red)]" : ""}`}>
+      <div className="tl flex items-center gap-2 text-muted">{arrow && <span aria-hidden className="text-red">→</span>}{label}</div>
+      <output className="macro mt-1.5 block text-[clamp(2.25rem,3.4vw,3.25rem)] text-ink">{num(v)}</output>
+      <p className="mt-1.5 truncate font-sans text-[13px] text-ink-2">{note}</p>
+    </div>
+  );
+}
+
+/* The accuracy card appears only what eval_ibm.py measured on IBM's public data, never a placeholder figure. */
+function Bench({ e }: { e: Extract<Evaluation, { status: "ok" }> }) {
+  return (
+    <div className="min-w-[190px] bg-panel px-4 py-3"
+      title={`${e.dataset} · ${e.rows_read === "all" ? "all" : num(e.rows_read)} rows · USD only, no device data · run ${e.run_on}`}>
+      <div className="tl text-muted">Accuracy · IBM Data</div>
+      <output className="macro mt-1.5 block text-[clamp(2.25rem,3.4vw,3.25rem)] text-ink">{e.lift}<span className="text-[0.6em]">×</span></output>
+      <p className="mt-1.5 truncate font-sans text-[13px] text-ink-2">Better than chance · precision {e.precision.toFixed(2)}, recall {e.recall.toFixed(2)}</p>
+    </div>
+  );
+}
+
+/* Panels carry a reading order (Step 1 → 4) so a first-time viewer knows where to look next. */
+function Step({ n, id, children }: { n: number; id?: string; children: ReactNode }) {
+  return (
+    <h2 id={id} className="tl flex items-center gap-2 text-ink">
+      <span aria-hidden className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-ink text-[11px] text-panel">{n}</span>
+      <span className="sr-only">Step {n}: </span>{children}
+    </h2>
+  );
+}
+
+function RedTeam({ snap, launch }: { snap: Snapshot; launch: (k: Attack["kind"]) => void }) {
   const live = snap.attacks.filter((a) => a.left > 0);
   return (
     <div className="border-b border-line-hi bg-panel">
       <div className="tl flex items-center justify-between px-3 pt-2.5">
-        <h2 className="text-red"><span aria-hidden>[ </span>Red Team<span aria-hidden> ]</span></h2>
-        <button role="switch" aria-checked={snap.autopilot} onClick={() => setAutopilot(!snap.autopilot)}
-          className={`tl border px-2 py-0.5 transition-colors ${snap.autopilot ? "border-red bg-red text-bg" : "border-line-hi text-ink-2 hover:text-ink"}`}>
-          Autopilot {snap.autopilot ? "On" : "Off"}
-        </button>
+        <Step n={1}>Plant a Mule Ring</Step>
+        {snap.autopilot && <span className="tl text-red">Autopilot</span>}
       </div>
+      <p className="px-3 pt-1 font-sans text-[13px] leading-snug text-ink-2">
+        Each button sends a real laundering pattern into the live bank. Or <a href="/send" target="_blank" rel="noopener" className="text-ink underline underline-offset-2 hover:text-red">send your own from a phone ↗</a>
+      </p>
       <div className="grid grid-cols-3 gap-px p-3 pb-2">
         {ATTACKS.map((a) => (
           <button key={a.kind} onClick={() => launch(a.kind)} title={`${a.hint} · Shortcut: ${a.key}`} aria-keyshortcuts={a.key}
-            className="tl group flex flex-col items-start gap-1 border border-line-hi bg-bg px-2 py-2 text-left text-ink transition-colors hover:border-red hover:bg-red hover:text-bg active:translate-y-px">
-            <span className="text-[11.5px] text-muted group-hover:text-bg">{a.key} · Launch</span>
+            className="tl group flex flex-col items-start gap-1 rounded-md border border-line-hi bg-panel px-2.5 py-2 text-left text-ink transition-colors hover:border-red hover:bg-red-soft active:scale-[0.98]">
+            <span className="text-[11.5px] text-muted">Key {a.key}</span>
             <span className="leading-tight">{a.label}</span>
           </button>
         ))}
@@ -406,14 +505,14 @@ function RedTeam({ snap, launch, setAutopilot }: { snap: Snapshot; launch: (k: A
       {live.length > 0 && (
         <ul className="grid gap-1 px-3 pb-2.5" aria-label="Attacks in progress">
           {live.map((a) => {
-            const done = a.total - a.left, cells = 8, on = Math.round((done / a.total) * cells);
+            const done = a.total - a.left;
             return (
               <li key={a.id} className="tl grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 text-[11.5px]">
                 <span translate="no" className="text-red">{a.id}</span>
                 <span className="truncate text-ink-2">{a.label}</span>
-                <span className="num shrink-0 whitespace-nowrap font-mono" role="progressbar" aria-label={`${a.id} transfers released`} aria-valuenow={done} aria-valuemin={0} aria-valuemax={a.total}>
-                  <span aria-hidden><span className="text-ink">{"█".repeat(on)}</span><span className="text-line-hi">{"░".repeat(cells - on)}</span></span>
-                  <span className="ml-1.5 text-ink-2">{done}/{a.total}</span>
+                <span className="num flex shrink-0 items-center gap-2 whitespace-nowrap" role="progressbar" aria-label={`${a.id} transfers released`} aria-valuenow={done} aria-valuemin={0} aria-valuemax={a.total}>
+                  <span aria-hidden className="h-1.5 w-20 overflow-hidden rounded-full bg-line"><span className="block h-full origin-left bg-red transition-transform duration-500" style={{ transform: `scaleX(${done / a.total})` }} /></span>
+                  <span className="text-ink-2">{done}/{a.total}</span>
                 </span>
               </li>
             );
@@ -424,19 +523,19 @@ function RedTeam({ snap, launch, setAutopilot }: { snap: Snapshot; launch: (k: A
   );
 }
 
-function Rings({ snap, sel, launch, setAutopilot }: { snap: Snapshot; sel: Sel; launch: (k: Attack["kind"]) => void; setAutopilot: (on: boolean) => void }) {
+function Rings({ snap, sel, launch }: { snap: Snapshot; sel: Sel; launch: (k: Attack["kind"]) => void }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <RedTeam snap={snap} launch={launch} setAutopilot={setAutopilot} />
+      <RedTeam snap={snap} launch={launch} />
       <div className="tl flex items-baseline justify-between border-b border-line bg-panel px-3 py-2.5">
-        <h2 id="rings-h" className="text-ink"><span aria-hidden>[ </span>Mule Rings<span aria-hidden> ]</span></h2>
-        <span className="num text-muted">{String(snap.networks.length).padStart(2, "0")} / {String(snap.alerts.length).padStart(2, "0")} Alerts</span>
+        <Step n={2} id="rings-h">Pick a Ring</Step>
+        <span className="num text-muted">{snap.networks.length} Found</span>
       </div>
       <div className="flex-1 overflow-y-auto overscroll-contain">
         {!snap.networks.length ? (
           <div className="p-4">
             <p className="tl text-ink-2">No Rings Yet</p>
-            <p className="mt-2 font-sans text-sm text-muted">{snap.running ? "The rules run on every transaction as it arrives. Launch an attack above, or send transfers from /send, and linked accounts appear here as one ring." : "The feed is paused. Press Go Live to resume."}</p>
+            <p className="mt-2 font-sans text-sm text-ink-2">{snap.running ? "Plant one above. When the rules flag accounts that pass money between each other, they show up here as one ring." : "The bank is paused. Press Resume."}</p>
           </div>
         ) : (
           <ul className="grid gap-px bg-line pb-px">
@@ -450,26 +549,25 @@ function Rings({ snap, sel, launch, setAutopilot }: { snap: Snapshot; sel: Sel; 
 
 function RingCard({ n, alerts, sel }: { n: Network; alerts: Alert[]; sel: Sel }) {
   const on = sel?.kind === "network" && sel.id === n.network_id;
+  const open = on || (sel?.kind === "alert" && alerts.some((a) => a.alert_id === sel.id));
   const done = n.status === "dismantled";
   return (
-    <article className="animate-enter bg-bg">
+    <article className="animate-enter bg-panel">
       <SelLink sel={{ kind: "network", id: n.network_id }} current={on}
-        className={`block px-3 pb-3 pt-2.5 transition-colors ${on ? "bg-ink text-bg" : "hover:bg-raised"}`}>
+        className={`block px-3 pb-3 pt-2.5 transition-colors ${on ? "bg-sel shadow-[inset_3px_0_0_var(--sel-line)]" : "hover:bg-bg"}`}>
         <div className="flex items-center justify-between gap-2">
-          <h3 translate="no" className="macro text-[26px]">{n.network_id}</h3>
-          {done ? <span className={`tl ${on ? "text-bg" : "text-ink"}`}><span aria-hidden>▣ </span>Dismantled</span>
-            : on ? <span className="tl text-bg"><span aria-hidden>[</span>{n.severity === "high" ? "▲ " : n.severity === "medium" ? "◆ " : "● "}{n.severity} {n.score.toFixed(2)}<span aria-hidden>]</span></span>
-            : <SevTag sev={n.severity} score={n.score} />}
+          <h3 translate="no" className="macro text-[24px] text-ink">{n.network_id}</h3>
+          {done ? <Locked /> : <SevTag sev={n.severity} score={n.score} />}
         </div>
-        <div className={`tl mt-2 flex items-baseline justify-between gap-2 ${on ? "text-bg/80" : "text-ink-2"}`}>
-          <span className="num">{String(n.accounts.length).padStart(2, "0")} Accts · {String(n.alert_ids.length).padStart(2, "0")} Alerts</span>
-          <span className={`num text-[13px] font-semibold ${on ? "text-bg" : "text-ink"}`}>{compactInr(n.total_in)} In</span>
+        <div className="tl mt-2 flex items-baseline justify-between gap-2 text-ink-2">
+          <span className="num">{n.accounts.length} Accounts · {n.alert_ids.length} {n.alert_ids.length === 1 ? "Alert" : "Alerts"}</span>
+          <span className="num text-[13px] font-semibold text-ink">{compactInr(n.total_in)} In</span>
         </div>
-        <p className={`tl mt-1.5 text-[11.5px] ${on ? "text-bg/80" : "text-ink-2"}`}>
-          {n.patterns.map((p) => <span key={p}><span aria-hidden>/// </span>{PATTERN[p]} </span>)}
+        <p className="mt-2 flex flex-wrap gap-1">
+          {n.patterns.map((p) => <span key={p} className="chip bg-bg px-1.5 py-0.5 text-[12px] text-ink-2">{PATTERN[p]}</span>)}
         </p>
       </SelLink>
-      <ul className="border-t border-line">
+      {open && <ul className="border-t border-line" aria-label={`Alerts in ${n.network_id}`}>
         {alerts.map((a) => {
           const aon = sel?.kind === "alert" && sel.id === a.alert_id;
           return (
@@ -484,7 +582,7 @@ function RingCard({ n, alerts, sel }: { n: Network; alerts: Alert[]; sel: Sel })
             </li>
           );
         })}
-      </ul>
+      </ul>}
     </article>
   );
 }
@@ -492,41 +590,33 @@ function RingCard({ n, alerts, sel }: { n: Network; alerts: Alert[]; sel: Sel })
 function GraphToolbar({ view, setView, hasGraph }: { view: View; setView: (v: View) => void; hasGraph: boolean }) {
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-line bg-panel px-4 py-2">
-      <h2 id="trail-h" className="tl text-ink"><span aria-hidden>[ </span>Money Trail<span aria-hidden> ]</span></h2>
-      <div className="flex gap-px bg-line" role="radiogroup" aria-label="Money trail view" aria-keyshortcuts="T">
+      <Step n={3} id="trail-h">Follow the Money</Step>
+      <div className="flex gap-1.5" role="radiogroup" aria-label="Money trail view" aria-keyshortcuts="T">
         {(["graph", "table"] as const).map((v) => (
           <button key={v} role="radio" aria-checked={view === v} disabled={!hasGraph} onClick={() => setView(v)}
-            className={`tl px-2.5 py-1 transition-colors disabled:opacity-40 ${view === v ? "bg-ink text-bg" : "bg-panel text-muted hover:text-ink"}`}>{v}</button>
+            className={`tl px-2.5 py-1 transition-colors disabled:opacity-40 ${view === v ? "bg-ink text-panel" : "bg-bg text-muted hover:text-ink"}`}>{v === "graph" ? "Graph" : "Table"}</button>
         ))}
       </div>
-      <ul className="tl flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[11.5px] text-ink-2" aria-label="Legend">
+      <ul className="tl flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-ink-2" aria-label="Legend">
         <li className="flex items-center gap-1.5">
-          <span className="text-muted">Risk</span>
-          {RISK_BANDS.map((b, i) => (
-            <span key={b} className="flex items-center gap-1"><span className="h-2.5 w-2.5" style={{ background: `var(--risk-${i})` }} aria-hidden />{b}</span>
-          ))}
+          <span>Low</span>
+          <span className="flex" aria-hidden>{RISK_BANDS.map((b, i) => <span key={b} className="h-2.5 w-2.5" style={{ background: `var(--risk-${i})` }} />)}</span>
+          <span>High Risk</span>
         </li>
-        <li className="flex items-center gap-1.5"><RoleMark role="alerted" />Alerted</li>
-        <li className="flex items-center gap-1.5"><RoleMark role="source" />Source</li>
-        <li className="flex items-center gap-1.5"><RoleMark role="device" />Device</li>
-        <li className="flex items-center gap-1.5"><span className="text-ink" aria-hidden>+9m</span>Wait Before Forwarding</li>
-        <li className="hidden items-center gap-1.5 xl:flex"><span aria-hidden className="inline-block h-2.5 w-4 bg-[var(--risk-1)]" />Size = Money Through</li>
+        <li className="flex items-center gap-1.5"><RoleMark role="alerted" />Flagged</li>
+        <li className="flex items-center gap-1.5"><RoleMark role="source" />Source, Maybe a Victim</li>
+        <li className="flex items-center gap-1.5"><RoleMark role="device" />Shared Phone</li>
       </ul>
     </div>
   );
 }
 
-/* Corner annotations carry real figures for the drawn trail, so the frame says something true. */
-function GraphFrame({ id, graph }: { id: string; graph: Graph }) {
-  const money = graph.edges.filter((e) => e.kind === "money");
-  const total = money.reduce((t, e) => t + (e.amount ?? 0), 0);
-  const corner = "pointer-events-none absolute tl text-[11.5px] text-muted";
+/* One plain caption: how to read the drawing. */
+function GraphFrame() {
   return (
-    <>
-      <span className={`${corner} left-3 top-2.5`} translate="no">+ Unit / {id}</span>
-      <span className={`${corner} bottom-2.5 left-3 num`}>+ {String(graph.nodes.length).padStart(2, "0")} Nodes · {String(money.length).padStart(2, "0")} Transfers</span>
-      <span className={`${corner} bottom-2.5 right-3 num hidden sm:block`}>{compactInr(total)} Moved Across Hops +</span>
-    </>
+    <p className="pointer-events-none absolute bottom-2.5 left-3 right-3 font-sans text-[13px] text-ink-2">
+      Money moves left → right in time order. Bigger square = more money. <span className="font-mono text-ink">+9m</span> = how long it sat before moving on.
+    </p>
   );
 }
 
@@ -608,7 +698,7 @@ function Watching({ snap }: { snap: Snapshot }) {
         <p className="macro text-[28px] text-ink">{rings ? "Select a Ring" : <>Screening <span className="num">{num(snap.stats.transactions)}</span></>}</p>
         <p className="font-sans text-sm text-ink-2">
           {rings ? "Its money trail draws here, each transfer in time order. Press J or K to step through rings."
-            : snap.running ? "Launch an attack (keys 1–3) and watch the ring assemble here as the money moves."
+            : snap.running ? "Plant a ring (keys 1–3) and watch its money trail draw here, hop by hop, as the money moves."
             : "The feed is paused. Press Go Live (or Space) to resume."}
         </p>
       </div>
@@ -616,9 +706,9 @@ function Watching({ snap }: { snap: Snapshot }) {
   );
 }
 
-function CasePanel({ detail: d, kind, busy, pending, dismantle }:
-  { detail: Detail; kind: "network" | "alert"; busy: boolean; pending: boolean; dismantle: (id: string) => void }) {
-  const [str, setStr] = useState(false);
+function CasePanel({ detail: d, kind, busy, pending, dismantle, str, setStr, kase, act }:
+  { detail: Detail; kind: "network" | "alert"; busy: boolean; pending: boolean; dismantle: (id: string) => void; str: boolean; setStr: (v: boolean) => void;
+    kase?: Snapshot["cases"][number]; act: (id: string, a: "file_str" | "close") => void }) {
   const [confirm, setConfirm] = useState(false);
   const [copied, setCopied] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -631,7 +721,7 @@ function CasePanel({ detail: d, kind, busy, pending, dismantle }:
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setStr(false);
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("keydown", onKey); opener.current?.focus(); };
-  }, [str]);
+  }, [str, setStr]);
   const group = (label: string, role: Parameters<typeof RoleMark>[0]["role"], ids?: string[]) => !!ids?.length && (
     <div className="grid grid-cols-[104px_minmax(0,1fr)] items-start gap-2">
       <span className="tl flex items-center gap-1.5 pt-1 text-ink-2"><RoleMark role={role} />{label}</span>
@@ -649,7 +739,7 @@ function CasePanel({ detail: d, kind, busy, pending, dismantle }:
     URL.revokeObjectURL(url);
   };
   const sources = d.sources?.length ?? 0;
-  const btn = "tl px-3 py-2 transition-[background-color,color,transform] active:translate-y-px";
+  const btn = "tl border border-line-hi px-3 py-2 transition-[background-color,color,transform] active:scale-[0.98]";
   return (
     <div className={`max-h-[42%] shrink-0 overflow-y-auto overscroll-contain border-t border-line-hi bg-bg transition-opacity duration-200 ${pending ? "opacity-40" : ""}`}>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 pt-3">
@@ -658,30 +748,32 @@ function CasePanel({ detail: d, kind, busy, pending, dismantle }:
           {kind === "alert" && <Tag>In <span translate="no">{d.network_id}</span></Tag>}
           {d.status === "dismantled" || d.status === "frozen" ? <Locked /> : <SevTag sev={d.severity} score={d.score} />}
         </div>
-        <div className="ml-auto flex gap-px bg-line">
-          <button ref={opener} onClick={() => setStr(true)} className={`${btn} bg-panel text-ink hover:bg-ink hover:text-bg`}>Draft STR</button>
+        <div className="ml-auto flex gap-1.5">
+          <button ref={opener} onClick={() => setStr(true)} className={`${btn} bg-panel text-ink hover:bg-raised`}>Draft STR</button>
+          {kase?.status === "open" && <button onClick={() => act(kase.case_id, "file_str")} className={`${btn} border-ink bg-ink font-semibold text-panel hover:opacity-90`}>File STR · {kase.case_id}</button>}
+          {kase?.status === "str_filed" && <button onClick={() => act(kase.case_id, "close")} className={`${btn} bg-panel font-semibold text-ink hover:bg-raised`}>Close {kase.case_id}</button>}
+          {kase?.status === "closed" && <span className="chip self-center bg-green-soft px-2 py-1 text-green">{kase.case_id} {CASE_STATUS.closed}</span>}
           {kind === "network" && d.status !== "dismantled" && !confirm && (
-            <button onClick={() => setConfirm(true)} className={`${btn} bg-panel font-semibold text-red hover:bg-red hover:text-bg`}>Dismantle Ring</button>
+            <button onClick={() => setConfirm(true)} className={`${btn} border-red bg-panel font-semibold text-red hover:bg-red-soft`}>Dismantle Ring</button>
           )}
         </div>
       </div>
       {confirm && d.status !== "dismantled" && (
-        <div className="mx-4 mt-3 border border-red" role="alertdialog" aria-label={`Confirm dismantling ${id}`}>
-          <div className="hazard h-2" aria-hidden />
+        <div className="mx-4 mt-3 overflow-hidden rounded-lg border border-red bg-red-soft" role="alertdialog" aria-label={`Confirm dismantling ${id}`}>
+
           <div className="flex flex-wrap items-center gap-3 px-3 py-2.5">
             <p className="tl min-w-0 flex-1 text-ink">
-              <span className="text-red">Armed · </span>Locks {d.freeze?.length} mule & exit accounts. {sources === 1 ? "1 source account goes" : `${sources} source accounts go`} to review, since they may be victims.
+              <span className="font-semibold text-red">Confirm · </span>Locks {d.freeze?.length} mule & exit accounts. {sources === 1 ? "1 source account goes" : `${sources} source accounts go`} to review, since they may be victims.
             </p>
-            <div className="flex gap-px bg-line">
+            <div className="flex gap-1.5">
               <button onClick={() => setConfirm(false)} className={`${btn} bg-bg text-ink-2 hover:text-ink`}>Cancel</button>
-              <button disabled={busy} onClick={() => dismantle(id)} className={`${btn} bg-red font-semibold text-bg hover:bg-ink disabled:opacity-50`}>
+              <button disabled={busy} onClick={() => dismantle(id)} className={`${btn} border-red bg-red font-semibold text-panel hover:opacity-90 disabled:opacity-50`}>
                 {busy ? "Locking…" : `Lock ${d.freeze?.length} Accounts`}
               </button>
             </div>
           </div>
         </div>
       )}
-      <p className="mt-3 max-w-[70ch] px-4 font-sans text-[15px] leading-relaxed text-pretty text-ink">{d.explanation}</p>
       <div className="grid gap-1.5 px-4 pb-4 pt-3">
         {kind === "network" ? <>
           {group("Sources", "source", d.sources)}
@@ -694,19 +786,22 @@ function CasePanel({ detail: d, kind, busy, pending, dismantle }:
         </>}
       </div>
       {str && (
-        <div className="fixed inset-0 z-[65] grid place-items-center overscroll-contain bg-bg/85 p-4" onClick={() => setStr(false)}>
+        <div className="fixed inset-0 z-[65] grid place-items-center overscroll-contain bg-ink/30 p-4" onClick={() => setStr(false)}>
           <div role="dialog" aria-modal="true" aria-labelledby="str-title" onClick={(e) => e.stopPropagation()}
-            className="animate-enter flex max-h-[85dvh] w-full max-w-2xl flex-col border border-ink bg-panel">
+            className="animate-enter flex max-h-[85dvh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-line-hi bg-panel shadow-[0_24px_60px_rgba(0,0,0,0.12)]">
             <div className="flex flex-wrap items-center gap-3 border-b border-line-hi px-4 py-3">
               <h2 id="str-title" className="tl text-ink">Suspicious Transaction Report · <span translate="no">{id}</span></h2>
               <span className="tl text-red">Draft · FIU-IND</span>
-              <div className="ml-auto flex gap-px bg-line">
-                <button onClick={copy} className={`${btn} bg-panel text-ink hover:bg-ink hover:text-bg`}>{copied ? "Copied" : "Copy"}</button>
-                <button onClick={download} className={`${btn} bg-panel text-ink hover:bg-ink hover:text-bg`}>Save .txt</button>
+              <div className="ml-auto flex gap-1.5">
+                <button onClick={copy} className={`${btn} bg-panel text-ink hover:bg-raised`}>{copied ? "Copied" : "Copy"}</button>
+                <button onClick={download} className={`${btn} bg-panel text-ink hover:bg-raised`}>Save .txt</button>
                 <button ref={closeRef} onClick={() => setStr(false)} className={`${btn} bg-panel text-muted hover:text-ink`} aria-label="Close Report"><span aria-hidden>✕</span></button>
               </div>
             </div>
-            <pre className="overflow-y-auto overscroll-contain whitespace-pre-wrap p-4 font-mono text-[12.5px] leading-relaxed text-ink"><samp>{d.str_draft}</samp></pre>
+            <div className="overflow-y-auto overscroll-contain">
+            {d.checklist && <Checklist items={d.checklist} />}
+            <pre className="whitespace-pre-wrap p-4 font-mono text-[12.5px] leading-relaxed text-ink"><samp>{d.str_draft}</samp></pre>
+            </div>
           </div>
         </div>
       )}
@@ -740,7 +835,7 @@ function Feed({ snap }: { snap: Snapshot }) {
   );
 }
 
-function ProfileView({ p, acct }: { p: Profile | null; acct: string | null }) {
+function ProfileView({ p, acct, ai, setLabel }: { p: Profile | null; acct: string | null; ai: AiExplanation | null; setLabel: (v: boolean | null) => void }) {
   if (!acct) return <p className="p-4 font-sans text-sm text-ink-2">Select any account in the graph, the ledger or the case panel to open its profile.</p>;
   if (!p) return (
     <div className="grid gap-3 p-4" aria-busy="true">
@@ -761,21 +856,24 @@ function ProfileView({ p, acct }: { p: Profile | null; acct: string | null }) {
           <div className="mt-2">{p.frozen ? <Locked /> : p.alerts.length ? <SevTag sev={sev} /> : <span className="tl text-muted">No Alerts</span>}</div>
         </div>
         <div className="grid content-center justify-items-end bg-bg px-4 py-3">
-          <span className="tl text-muted">Risk</span>
+          <span className="tl text-muted">Rule Risk</span>
           <span className="flex items-center gap-2">
             <span className="h-3.5 w-3.5" style={{ background: `var(--risk-${riskBand(p.risk)})` }} aria-hidden />
             <output className="macro text-[40px] text-ink">{p.risk.toFixed(2)}</output>
           </span>
         </div>
       </div>
-      <dl className="tl grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 px-4 py-3">
+      <h4 className="eyebrow px-4 pt-3">AI Classifier · Why This Score</h4>
+      {ai ? <div className="pt-1.5"><AiPanel ai={ai} /></div> : <div className="px-4 py-3"><Skeleton className="h-24" /></div>}
+      <Verdict id={p.account_id} label={p.label ?? null} onChange={setLabel} />
+      <dl className="tl grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 border-t border-line px-4 py-3">
         {row("Account", `${p.type} · Opened ${day(p.open_date)}`)}
         {row("KYC Risk", p.kyc_risk)}
         {row("Devices", <span translate="no">{p.devices.join(", ") || "None"}</span>)}
         {row("IP Addresses", <span translate="no">{p.ips.join(", ") || "None"}</span>)}
       </dl>
       <dl className="grid grid-cols-2 gap-px border-y border-line bg-line">
-        {[["Received", inr(p.total_received)], ["Senders", String(p.unique_senders).padStart(2, "0")], ["Sent", inr(p.total_sent)],
+        {[["Received", inr(p.total_received)], ["Senders", p.unique_senders], ["Sent", inr(p.total_sent)],
           ["To Forward", p.avg_minutes_to_forward != null ? `${p.avg_minutes_to_forward} min` : "n/a"]].map(([k, v]) => (
           <div key={k} className="bg-panel px-4 py-2.5">
             <dt className="tl text-muted">{k}</dt>
@@ -791,13 +889,13 @@ function ProfileView({ p, acct }: { p: Profile | null; acct: string | null }) {
       </div>
       {!!p.alerts.length && (
         <div className="grid gap-1 border-t border-line px-4 py-3">
-          <h4 className="tl text-muted"><span aria-hidden>[ </span>Why It’s Flagged<span aria-hidden> ]</span></h4>
+          <h4 className="eyebrow">Why It’s Flagged</h4>
           {p.alerts.flatMap((a) => a.reasons).map((r) => (
-            <p key={r} className="flex gap-2 font-sans text-[14px] leading-snug text-ink"><span aria-hidden className={sev === "high" ? "text-red" : "text-ink-2"}>&gt;</span><span className="min-w-0 break-words">{r}</span></p>
+            <p key={r} className="flex gap-2 font-sans text-[14px] leading-snug text-ink"><span aria-hidden className={sev === "high" ? "text-red" : "text-ink-2"}>•</span><span className="min-w-0 break-words">{r}</span></p>
           ))}
         </div>
       )}
-      <h4 className="tl border-t border-line px-4 pb-1 pt-3 text-muted"><span aria-hidden>[ </span>Transactions<span aria-hidden> ]</span></h4>
+      <h4 className="eyebrow border-t border-line px-4 pb-1 pt-3">Transactions</h4>
       <ul className="font-mono text-[13px] uppercase">
         {p.txns.map((t) => {
           const out = t.sender_account === p.account_id, other = out ? t.receiver_account : t.sender_account;

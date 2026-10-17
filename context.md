@@ -1,6 +1,8 @@
 # MuleTrace: Project Context
 
-Hand-off notes for anyone (person or AI agent) picking up this repo. They cover what was built, why each decision was made, and what is still open. Last updated: 16 Oct 2026, day 1 of the 48-hour hackathon.
+Hand-off notes for anyone (person or AI agent) picking up this repo. They cover what was built, why each decision was made, and what is still open. Last updated: 17 Oct 2026, day 2 of the 48-hour hackathon.
+
+> **Current phase:** the Investigation Copilot from [`plan.md`](plan.md) is built (change log item 10). Microsoft setup steps live in [`microsoft/README.md`](microsoft/README.md).
 
 ## 1. What MuleTrace is
 
@@ -18,13 +20,15 @@ An AML (anti-money-laundering) SOC console that finds **money-mule networks**, n
 ```
 muletrace.py   Python engine: synthetic data, detection rules, money trail, ring grouping (stdlib only)
 app.py         FastAPI: live bank engine (feed, attacks, ingest) + SSE stream + REST endpoints + Power Automate webhook
-eval_ibm.py    Scores the rules on the public IBM AML dataset (precision / recall / lift)
+eval_ibm.py    Scores the rules on the public IBM AML dataset (precision / recall / lift, attempt recall) → data/eval.json
+microsoft/     Copilot Studio agent instructions, Teams adaptive card, setup for Dev Tunnels / Copilot Studio / Power Automate / Power BI
 data/*.csv     Written on API start, for Power BI
 web/           Next.js 16 (App Router) + Tailwind v4 + cytoscape: the SOC dashboard
   app/dashboard.tsx  page state, URL sync, SSE, panels, keyboard shortcuts, signals log
   app/graph.tsx      money-trail graph (cytoscape, preset layout from flow.ts)
   app/flow.ts        pure layout maths: hop columns, ordering, device lane, wait times
   app/send/          /send: phone page for judges to send transfers and see them caught
+  app/evidence.tsx   Evidence tab, STR checklist, Policy sheet, Ask Copilot sheet
   app/ui.tsx         primitives: NavLink/AccountLink (deep links), SevTag, Barcode chart, Readout…
   app/lib.ts         types, API helpers, Intl formatters (₹, en-IN dates), risk bands
   app/globals.css    theme tokens (dark telemetry), CRT overlay, blueprint grid, hazard stripes
@@ -88,7 +92,18 @@ cd web && node flow.check.mjs               # graph layout self-check
   - `GET /alert/{id}`, `/alert/{id}/graph`
   - `GET /network/{id}`, `/network/{id}/graph`
   - `POST /network/{id}/dismantle`
-- **Copilot Studio grounding:** `GET /alert/{id}` and `GET /network/{id}` return `explanation` and `str_draft`. Use `/openapi.json` to build a custom connector.
+- **Investigation (Copilot grounding):**
+  - `GET /alert/{id}/evidence` and `GET /network/{id}/evidence` return the claim, a confidence of high/medium/low/**insufficient**, computations (value, formula, input IDs), cited transactions, gaps and next questions.
+  - `GET /compare?accounts=A,B` returns direct transfers, shared devices, the same ring, and common counterparties.
+  - `GET /alert/{id}` and `GET /network/{id}` now include an STR `checklist` (supported vs missing).
+- **Policy:**
+  - `GET /policy` returns the rules in force.
+  - `POST /policy/replay` reruns detection on the current bank and changes nothing.
+  - `POST /policy/apply` is queued into the tick, like every other state change. The policy survives New Bank.
+- **Benchmark and exports:**
+  - `GET /evaluation` reads `data/eval.json`, or returns `status: "not run"`.
+  - `GET /export/{accounts|transactions|alerts|networks}.csv` serves the live tables for Power BI.
+- **Copilot Studio spec:** `GET /copilot/openapi.json` is OpenAPI 3.0 with only the 14 investigator tools, each with a camelCase `operationId`. `servers` comes from `PUBLIC_URL`.
 - **Dismantle:** freezes mules and exits (simulated), sends sources to review, opens a case, and POSTs the case JSON to `PLAYBOOK_WEBHOOK`. The response reports `sent (status)`, `not configured`, or `failed: …`.
 
 ## 5. Change log (in order)
@@ -133,20 +148,103 @@ cd web && node flow.check.mjs               # graph layout self-check
    - **Copy:** the ticker and empty states were rewritten for a feed with no end.
    - **Tests:** verified end to end. A chain attack was caught as a ring, and judge structuring from a phone was caught.
 
+10. **Investigation Copilot** (plan.md; DeepSeek's "winning idea", corrected for India and honesty).
+   - **Engine:** each rule hit records its evidence (the transaction IDs plus computed figures with formulas). `detect()` takes policy parameters (`rules`, `ratio`, `fan`, `dormant_days`), and `confidence()` returns `insufficient` when only the device rule fires or the trail has fewer than 2 transfers.
+   - **Self-check:** every cited ID exists, and each pass-through ratio recomputes from its own inputs.
+   - **API:** evidence bundles, compare, STR checklist, policy replay/apply, the evaluation endpoint, live CSV exports, and the Copilot spec.
+   - **UI:**
+     - **Evidence** tab: hovering a figure or row lights exactly those transfers in the graph; clicking pins them. "Ask" questions answer inline (trace, compare, STR).
+     - **Policy** side sheet: Replay before Apply, with a two-step confirm. The header shows "Policy · Custom" when the policy differs from the defaults.
+     - **Ask Copilot** sheet: a Copilot Studio iframe, shown only when `NEXT_PUBLIC_COPILOT_URL` is set.
+     - **IBM AML Benchmark** card (xl+): shows only measured numbers.
+     - The STR dialog shows the checklist.
+   - **Fixed:** a side-sheet focus effect re-ran on every live tick, which stole focus from the sliders. The effect is now keyed once per open, with a ref for `onClose`.
+   - **Microsoft:** `microsoft/` holds the agent instructions, a Teams adaptive card, and step-by-step setup for Dev Tunnels, Copilot Studio (REST API tools, Web app and Teams channels), Power Automate and Power BI.
+
+11. **Judge-readability pass** (the user said the dashboard was information-overloaded for a demo video).
+   - **Reading order:** panels are headed **Step 1 Plant a Mule Ring → Step 2 Pick a Ring → Step 3 Follow the Money → Step 4 Check the Evidence**. Picking a ring opens the Evidence tab.
+   - **Summary:** now a plain pipeline (transfers checked → alerts raised → mule rings → accounts locked), each with a one-line caption. The barcode chart and the hero block were removed (snapshot `hourly` dropped).
+   - **Header:** status, time, Pause, Rules, Ask Copilot, and **More**. More holds clock speed, Autopilot, the judge phone page, New Bank and shortcuts. The footer was removed.
+   - **Graph:**
+     - The legend is cut to Low→High risk, Flagged, Source (maybe a victim) and Shared phone.
+     - One plain caption replaces the corner annotations.
+     - The ring list shows alerts only under the selected ring.
+   - **Accuracy card:** hidden until `data/eval.json` exists, instead of showing "Not Run".
+
+12. **Light workspace redesign** (the user said the terminal look wasn't easy for bank employees).
+   - **Theme:** dark → light, using `minimalist-ui` tokens in `globals.css`.
+   - **Type:** `.tl` and `.macro` are now normal-case Plex Sans. Archivo Black and the CRT overlay were removed.
+   - **Components:**
+     - severity and confidence as pastel pills
+     - numbered circle badges for the Steps
+     - underline tabs
+     - rounded controls
+     - real progress bars
+     - a soft-shadow dialog and side sheet
+     - a dot-grid graph surface
+     - rounded graph nodes with hairline borders
+   - **Text:** the STR draft is shown in sans.
+   - **Checked:** text contrast at 1440, 1920 and 390 px.
+
+13. **Explainable AI classifier for Microsoft Foundry** (`xai.py`, `model/`, `foundry/`).
+   - **Model:** LightGBM with monotone constraints and 12 behavioural features. Explanations are exact TreeSHAP contributions from `pred_contrib`, with no `shap` dependency.
+   - **Training data:** synthetic banks of varied size, with rings, jittered rings, and legitimate look-alikes (payroll, merchant, cash shop, sweep, quiet account, one-off big credit).
+   - **Shortcuts removed during development:**
+     - KYC rating and account age (mules were always new and high-risk), fixed by adding rented old mule accounts and new legitimate customers
+     - transaction counts and counterparty counts (they depend on how busy the bank is), replaced by burst-per-hour features
+   - **Results:** held-out AUC about 0.96–0.98, with about 1.6% of ordinary customers in a live-style bank flagged (the self-check fails above 5%).
+   - **API:**
+     - `GET /account/{id}/ai` and `GET /ai/model`
+     - the `ai` block in alert evidence, and `ai_accounts` (scores plus `ai_only`) in ring evidence
+     - two new Copilot tools: `explainAccountRisk` and `getModelCard`
+   - **Foundry:** `FOUNDRY_SCORING_URL` + `FOUNDRY_KEY` switch scoring to the endpoint, with local fallback noted on screen. `foundry/deploy.py` uses azure-ai-ml to create the managed online endpoint (hub-based project).
+   - **UI:** an AI Classifier panel (diverging SHAP bars) in Evidence and in the Account view; a ring view of AI scores per account, highlighting "AI flags accounts no rule alerted". Scores are capped at 1–99%.
+   - **Dependencies:** `lightgbm` and `numpy` are in `requirements.txt`. On a Mac, LightGBM needs `brew install libomp`.
+
+14. **Ponytail pass: lighter layout, leaner serving.**
+   - **Evidence:** opens with a verdict line, "Rules: High · AI: 99% Mule" (for a ring: "AI: 5/5 accounts flagged"), then "Why · AI" and "Why · Rules".
+     - Transactions and data gaps fold away in native `<details>`.
+     - "Alerts in this ring" was deleted, because the ring list shows it.
+   - **Case panel:** the paragraph that repeated the Evidence claim was deleted, so the graph gets the space.
+   - **Server:** the SSE snapshot is serialised once per version and shared by every client (projector plus judge phones), instead of once per client per tick.
+   - **Graph:** if cytoscape's chunk fails to load, it says so, with Reload and Table options, instead of drawing nothing.
+   - **Builds:** `next.config.ts` reads `NEXT_DIST_DIR`. Test builds use `.next-test`, so they never touch the dev server's `.next`. A shared `.next` caused the "Failed to load chunk … cytoscape" error.
+
+15. **Close the loop: cases, analyst feedback, retraining, judge QR.**
+   - **Cases:** status runs open → str_filed (simulated FIU-IND acknowledgement) → closed, with an `events` audit trail. `POST /case/{id}/{file_str|close}` returns 409 for an out-of-order step. A second dismantle of the same ring now also returns 409.
+   - **Labels:** `POST /account/{id}/label?mule=` stores the analyst verdict (no value clears it). Dismantling auto-labels the frozen accounts as mules; sources are not labelled, since they may be victims.
+   - **Retraining:**
+     - `POST /ai/retrain` trains the next model version in a worker thread, with analyst rows weighted ×30. It uses the cached synthetic base and takes about 2 s.
+     - The new version is in memory only; `model/` on disk stays v1.
+     - The snapshot carries `cases`, `labels` and `model_version`. AI panels show the model version and refetch when it changes.
+   - **UI:**
+     - **Cases** sheet: timeline, File STR / Close buttons, and "Teach the Classifier · Retrain".
+     - **Case panel:** next-step button (File STR → Close).
+     - **Account tab:** Confirm Mule / Not a Mule.
+     - **More → Judge Phone QR Code:** a `qrcode` npm package rendering an SVG locally; it warns on localhost.
+   - **Self-check:** an analyst "not a mule" on the top-scoring account yields v2, which scores it lower.
+
 ## 6. Design rules currently in force (don't regress)
 
+- **Look:** a light analyst workspace (from the `minimalist-ui` skill), replacing the dark terminal look in item 12.
+  - Warm off-white canvas `--bg #f3f2ee`, white working surfaces `--panel`, charcoal text `--ink #1f2328`, 1px hairlines, 6–12px radii.
+  - Panes are still separated by 1px grid gaps.
 - **Colour:**
-  - The theme is dark telemetry only, defined by tokens in `globals.css`.
-  - Red is the only accent and also means High severity.
-  - Severity always carries a glyph (▲ ◆ ●) and a word, never colour alone.
-- **Risk ramp:** `--risk-0..3` (#842a2a, #b82c2c, #ec3a30, #ff9282). It is validated with `validate_palette.js --ordinal --mode dark --surface #111111`. Re-run the validator if you change it.
-- **Text contrast:** must be ≥ 4.5:1. The current muted grey #949494 sits at about 5.7–6.5:1.
-- **Case:** uppercase only for short labels (`.tl`). Long text uses `.msg` (normal case). Source strings stay Title Case and are uppercased by CSS.
-- **Graph:**
-  - Amounts appear in tooltips and the table view, not on lines.
-  - Wait-time labels show only when a ring has ≤ 12 transfers; busy rings show them on hover.
-- **URLs:** every selection must stay a real link, and URL params must keep working.
-- **Destructive actions:** need the in-page two-step confirmation. Never use `confirm()`.
+  - **Red** (`--red #b42318`) means risk or danger only.
+  - **Status tags** are pastel pills: High = red-soft, Medium = amber-soft, Low = grey. Each also carries a glyph and a word, never colour alone.
+  - **Selection** is pale blue `--sel`, with a blue left edge.
+- **Risk ramp (on white):** `--risk-0..3` = #f0b4a8, #e07a66, #c4321f, #7e1c12. Higher risk is darker. Graph nodes carry a hairline border, because the palest step is faint on white.
+- **Contrast:** text must be ≥ 4.5:1. Muted text `#66655f` measures 5.2:1 on the canvas and 5.9:1 on white.
+- **Type** (the user preferred the earlier lettering, so it was restored on the light theme):
+  - IBM Plex Mono capitals for labels (`.tl`, `.eyebrow`, `.chip`).
+  - Archivo Black for figures and ring IDs (`.macro`).
+  - Plex Sans for prose (captions, explanations, gaps).
+  - No zero-padded numbers.
+- **Never bring back:** ASCII brackets, `///`, `>>>`, block-character bars, scanline/CRT overlays, a blinking cursor, or the dark theme.
+- **Judge-first:** new UI must fit the Step 1–4 reading order. Secondary controls go in **More**. Every number gets a plain-English caption.
+- **Graph:** amounts appear in tooltips and the table view, not on lines. Wait labels show only when a ring has ≤ 12 transfers.
+- **URLs:** every selection must stay a real link.
+- **Destructive actions:** need the in-page two-step confirmation (now a red-soft panel). Never use `confirm()`.
 
 ## 7. Integrations
 
@@ -154,17 +252,19 @@ cd web && node flow.check.mjs               # graph layout self-check
   1. Instant cloud flow → trigger "When an HTTP request is received" (a **premium** connector), with **Who can trigger** set to **Anyone**. Paste the JSON schema with the case fields: `case_id, network_id, alert_ids[], frozen[], review[], summary, str_draft, status, score, total_in`.
   2. Actions: Teams post, a Planner task due in 7 days, and Outlook email.
   3. Run the API with `PLAYBOOK_WEBHOOK='…'`.
-- **Copilot Studio:** a custom connector from `/openapi.json`, using actions `GET /network/{id}` and `GET /alert/{id}`.
-- **Power BI:** connect to `data/*.csv` (`networks.csv` has one row per ring).
+- **Copilot Studio:** a REST API tool from `/copilot/openapi.json` (14 tools), with the instructions in `microsoft/agent-instructions.md`. See `microsoft/README.md`.
+- **Power BI:** use the live `/export/*.csv` through Get data → Web, or the static `data/*.csv` (the canonical demo dataset).
 - **Azure:** API on App Service (`uvicorn app:app --host 0.0.0.0`, set `CORS_ORIGINS`); `web/` on Static Web Apps or App Service, with `NEXT_PUBLIC_API` set at build time.
 
 ## 8. Known issues and open items
 
-- **IBM AML numbers not run yet.** This needs a Kaggle login: `kaggle datasets download ealtman2019/ibm-transactions-for-anti-money-laundering-aml -f HI-Small_Trans.csv`, then `python3 eval_ibm.py HI-Small_Trans.csv --limit 1000000`. Put the result in the README's Q&A.
+- **IBM AML numbers not run yet.** The Kaggle CLI is installed in `.venv` and needs `~/.kaggle/kaggle.json`. See the README's "Evaluation on public data" section; the result lands in `data/eval.json` and the dashboard card.
+- **Foundry endpoint not deployed yet.** It needs an Azure subscription, `az login` and a hub-based Foundry project. See `foundry/README.md`.
+- **Copilot Studio agent not created yet.** It needs a public URL (Dev Tunnel) and the user's Microsoft sign-in. Follow `microsoft/README.md`.
 - **Facts to verify before the slides:** the PAN rule (Rule 114B, ₹50k cash) and the STR deadline (7 working days, PML Rules) were written from memory.
-- **Next dev server stale CSS:** if styles don't update, run `rm -rf .next && npm run dev`.
+- **Next dev server stale CSS or "Failed to load chunk":** run `rm -rf .next && npm run dev`. Agents must build with `NEXT_DIST_DIR=.next-test` so they never touch the dev server's `.next`.
 - **Leftover processes:** three uvicorn processes (ports 8765, 8770, 8771) were started inside the agent sandbox and can't be killed, not even with `sudo`. They're harmless and should go away after quitting Claude Code or rebooting.
-- **Not built:** CSV upload and ingest, a database or auth (cases are lost on restart), an ML anomaly score, and an LLM call inside the app (Copilot Studio handles that).
+- **Not built:** CSV upload (cut, since `/ingest` covers incoming data), API-key auth, a database or auth (cases are lost on restart), an ML anomaly score, and an LLM call inside the app (Copilot Studio handles that).
 - **Minor:**
   - The explanation text says "3 alert(s)".
   - The selected ring card's white header picks up faint scanlines.
@@ -177,6 +277,9 @@ cd web && node flow.check.mjs               # graph layout self-check
 3. Press **2** (Pass-Through Chain). The ring assembles hop by hop. Use **Trace Flow** for the waits.
 4. A judge opens **/send** on a phone and taps **Structuring**. Their account becomes a ring on the big screen, and their phone says **Caught**.
 5. Launch **1** and **3**. The headline settles at about 14 alerts → 3 rings.
-6. **Copilot:** "Explain this ring and draft the STR."
+6. **Evidence tab, then Ask Copilot:**
+   - "Why is AL-10x suspicious?" The answer cites `[TX…]` and the graph lights those edges.
+   - "Draft the STR." The checklist shows 4 supported and 3 missing items.
+   - **Policy:** turn off Structuring → Replay → "Rings 3 → 2, missed NET-x" → Defaults.
 7. **Dismantle Ring → Lock N Accounts.** Sources go to review, and Teams and Planner fire.
 8. **Credibility:** IBM AML lift, and the answer on MuleHunter.AI.

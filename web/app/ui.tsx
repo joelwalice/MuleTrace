@@ -1,6 +1,6 @@
 "use client";
 import { createContext, useContext, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { SEV_LABEL, num, reducedMotion, type Sel, type Sev } from "./lib";
+import { SEV_LABEL, reducedMotion, type Sel, type Sev } from "./lib";
 
 /* Navigation: every selection is a real link (deep-linkable, Cmd/Ctrl+click opens a new tab);
    a plain click updates the view in place. */
@@ -22,7 +22,7 @@ export function AccountLink({ id, className = "" }: { id: string; className?: st
   const nav = useNav();
   return (
     <NavLink href={nav.hrefAccount(id)} onNavigate={() => nav.openAccount(id)} translate="no"
-      className={`font-mono underline-offset-2 transition-colors hover:bg-ink hover:text-bg ${className}`}>{id}</NavLink>
+      className={`rounded-[3px] font-mono text-[0.95em] text-sel-line underline-offset-2 transition-colors hover:bg-sel hover:underline ${className}`}>{id}</NavLink>
   );
 }
 
@@ -37,20 +37,21 @@ export function Skeleton({ className = "" }: { className?: string }) {
 
 /* Severity = glyph shape + word, so it never rests on colour. Red is reserved for High. */
 const SEV_GLYPH: Record<Sev, string> = { high: "▲", medium: "◆", low: "●" };
-const SEV_TONE: Record<Sev, string> = { high: "text-red", medium: "text-ink", low: "text-muted" };
+const SEV_TONE: Record<Sev, string> = { high: "text-red", medium: "text-amber", low: "text-muted" };
+const SEV_CHIP: Record<Sev, string> = { high: "bg-red-soft text-red", medium: "bg-amber-soft text-amber", low: "bg-bg text-muted" };
 export function SevGlyph({ sev }: { sev: Sev }) {
   return <span aria-hidden className={SEV_TONE[sev]}>{SEV_GLYPH[sev]}</span>;
 }
 export function SevTag({ sev, score }: { sev: Sev; score?: number }) {
   return (
-    <span className={`tl inline-flex items-center gap-1.5 whitespace-nowrap ${SEV_TONE[sev]}`}>
-      <span aria-hidden>[</span><SevGlyph sev={sev} />{SEV_LABEL[sev]}{score != null && <span className="num text-ink-2">{score.toFixed(2)}</span>}<span aria-hidden>]</span>
+    <span className={`chip inline-flex items-center gap-1.5 whitespace-nowrap px-2 py-0.5 text-[12.5px] font-medium ${SEV_CHIP[sev]}`}>
+      <SevGlyph sev={sev} />{SEV_LABEL[sev]} risk{score != null && <span className="num opacity-80">{score.toFixed(2)}</span>}
     </span>
   );
 }
 
 export function Tag({ children, tone = "text-ink-2" }: { children: ReactNode; tone?: string }) {
-  return <span className={`tl inline-flex items-center gap-1 whitespace-nowrap border border-line-hi px-1.5 py-px ${tone}`}>{children}</span>;
+  return <span className={`chip inline-flex items-center gap-1 whitespace-nowrap border border-line-hi px-2 py-0.5 text-[12.5px] font-medium ${tone}`}>{children}</span>;
 }
 export function Locked() {
   return <Tag tone="text-ink"><span aria-hidden>▣</span>Locked</Tag>;
@@ -67,38 +68,6 @@ export function RoleMark({ role }: { role: "alerted" | "source" | "member" | "ex
 
 export function Kbd({ children }: { children: ReactNode }) {
   return <kbd className="tl border border-line-hi px-1.5 py-px text-[11.5px] text-ink">{children}</kbd>;
-}
-
-/* Transaction "barcode": one thin column per hour (last 48h). Hover/focus reads out the hour;
-   arrow keys step through it. The latest hour is drawn in phosphor white, the rest recede. */
-export function Barcode({ data, label, unit }: { data: number[]; label: string; unit: (i: number) => string }) {
-  const [hover, setHover] = useState<number | null>(null);
-  const n = data.length, w = n * 3, h = 30;
-  const max = Math.max(1, ...data);
-  const at = hover ?? n - 1;
-  const pick = (clientX: number, el: SVGSVGElement) => {
-    const r = el.getBoundingClientRect();
-    setHover(Math.max(0, Math.min(n - 1, Math.floor(((clientX - r.left) / r.width) * n))));
-  };
-  return (
-    <div className="relative">
-      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="h-8 w-[144px] touch-none" tabIndex={0} role="img"
-        aria-label={`${label}: latest ${data[n - 1]} ${unit(n - 1)}, peak ${max}`}
-        onPointerMove={(e) => pick(e.clientX, e.currentTarget)} onPointerLeave={() => setHover(null)} onBlur={() => setHover(null)}
-        onKeyDown={(e) => { if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); setHover((p) => Math.max(0, Math.min(n - 1, (p ?? n - 1) + (e.key === "ArrowLeft" ? -1 : 1)))); } }}>
-        <line x1="0" x2={w} y1={h - 0.5} y2={h - 0.5} stroke="var(--line-hi)" strokeWidth="1" />
-        {data.map((v, i) => {
-          const bh = Math.max(1, (v / max) * (h - 2));
-          return <rect key={i} x={i * 3} y={h - 1 - bh} width="2" height={bh} fill={i === at ? "var(--ink)" : "var(--muted)"} />;
-        })}
-      </svg>
-      {hover != null && (
-        <div className="tl pointer-events-none absolute bottom-full right-0 z-30 mb-1 whitespace-nowrap border border-line-hi bg-bg px-2 py-1">
-          <span className="num text-ink">{data[at]}</span> <span className="text-muted">{unit(at)}</span>
-        </div>
-      )}
-    </div>
-  );
 }
 
 export function useTween(value: number, ms = 600) {
@@ -118,25 +87,4 @@ export function useTween(value: number, ms = 600) {
     return () => cancelAnimationFrame(raf);
   }, [value, ms]);
   return shown;
-}
-
-export function Tween({ value, pad = 0 }: { value: number; pad?: number }) {
-  const v = num(useTween(value));
-  return <>{pad ? v.padStart(pad, "0") : v}</>;
-}
-
-/* Readout: a labelled telemetry value. <output> marks it as a live computed result. */
-export function Readout({ label, value, fmt = num, note, trend }:
-  { label: string; value: number; fmt?: (v: number) => string; note?: ReactNode; trend?: ReactNode }) {
-  const v = useTween(value);
-  return (
-    <div className="flex min-w-0 items-end justify-between gap-3 bg-panel px-4 py-3">
-      <div className="min-w-0">
-        <div className="tl text-muted">{label}</div>
-        <output className="macro mt-1.5 block text-[30px] text-ink">{fmt(v)}</output>
-        {note && <div className="tl mt-1.5 truncate text-[11.5px] text-muted">{note}</div>}
-      </div>
-      {trend}
-    </div>
-  );
 }

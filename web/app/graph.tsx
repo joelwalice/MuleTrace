@@ -17,9 +17,9 @@ function sheet(): StylesheetJson {
   const mono = `${v("--font-plex-mono") || "ui-monospace"}, ui-monospace, monospace`;
   return [
     { selector: "node", style: {
-      shape: "rectangle", label: "data(label)", color: ink2, "font-size": 12.5, "font-weight": 500, "font-family": mono,
+      shape: "round-rectangle", label: "data(label)", color: ink2, "font-size": 12.5, "font-weight": 500, "font-family": mono,
       "text-valign": "bottom", "text-margin-y": 7, "text-wrap": "wrap", "text-outline-color": panel, "text-outline-width": 4,
-      width: "data(size)", height: "data(size)", "border-width": 0,
+      width: "data(size)", height: "data(size)", "border-width": 1, "border-color": lineHi,
       "transition-property": "background-color, opacity, border-color", "transition-duration": 220,
     } },
     ...[0, 1, 2, 3].map((b) => ({ selector: `node[band = ${b}]`, style: { "background-color": v(`--risk-${b}`) } })),
@@ -31,7 +31,7 @@ function sheet(): StylesheetJson {
       shape: "rectangle", width: 1, height: 1, "background-opacity": 0, "border-width": 0, events: "no",
       label: "data(label)", "text-valign": "center", "text-halign": "center", "text-wrap": "wrap", color: muted,
       "font-size": 11.5, "font-weight": 600, "text-outline-width": 0, "text-background-color": bg, "text-background-opacity": 1,
-      "text-background-padding": "4px", "text-border-width": 1, "text-border-color": lineHi, "text-border-opacity": 1,
+      "text-background-padding": "5px", "text-background-shape": "roundrectangle", "text-border-width": 1, "text-border-color": lineHi, "text-border-opacity": 1,
     } },
     { selector: "node.fresh", style: { "outline-width": 2, "outline-color": red, "outline-offset": 4 } },
     { selector: "node.picked", style: { "outline-width": 2, "outline-color": ink, "outline-offset": 5, color: ink } },
@@ -45,6 +45,8 @@ function sheet(): StylesheetJson {
     { selector: "edge.labeled, edge.focus", style: { label: "data(dlabel)" } },
     { selector: "edge.focus", style: { "line-color": ink, "target-arrow-color": ink, opacity: 1, "z-index": 20 } },
     { selector: "edge.flow", style: { "line-color": red, "target-arrow-color": red, opacity: 1, "z-index": 30, label: "data(dlabel)" } },
+    { selector: "edge.cite", style: { "line-color": ink, "target-arrow-color": ink, opacity: 1, "z-index": 25, label: "data(dlabel)", width: 4 } },
+    { selector: "node.cite", style: { "outline-width": 2, "outline-color": ink, "outline-offset": 4, color: ink } },
     { selector: "edge.fresh", style: { "line-color": red, "target-arrow-color": red, opacity: 1 } },
     { selector: "edge[kind='shared_device']", style: { "line-style": "dashed", "target-arrow-shape": "none", width: 1, "line-color": muted, opacity: 0.55, "curve-style": "straight" } },
     { selector: ".dim", style: { opacity: 0.12 } },
@@ -55,7 +57,8 @@ function sheet(): StylesheetJson {
 type Tip = { x: number; y: number; value: string; unit: string; lines: string[] };
 type Step = { i: number; n: number; text: string } | null;
 
-export default function MoneyGraph({ graph, onNode }: { graph: Graph | null; onNode: (id: string) => void }) {
+/* `cite`: transaction or account ids the Evidence panel points at; they stay lit, everything else dims. */
+export default function MoneyGraph({ graph, onNode, cite }: { graph: Graph | null; onNode: (id: string) => void; cite?: string[] }) {
   const box = useRef<HTMLDivElement>(null);
   const cy = useRef<Core | null>(null);
   const onNodeRef = useRef(onNode);
@@ -64,6 +67,7 @@ export default function MoneyGraph({ graph, onNode }: { graph: Graph | null; onN
   const [size, setSize] = useState({ w: 0, h: 0 });
   const frame = useRef<HTMLDivElement>(null);
   const [tip, setTip] = useState<Tip | null>(null);
+  const [broken, setBroken] = useState(false);
   const [step, setStep] = useState<Step>(null);
   useEffect(() => { onNodeRef.current = onNode; }, [onNode]);
 
@@ -118,7 +122,7 @@ export default function MoneyGraph({ graph, onNode }: { graph: Graph | null; onN
       cleanups.push(() => ro.disconnect());
       cy.current = c;
       setReady(true);
-    });
+    }).catch(() => setBroken(true));  // e.g. a stale chunk after a rebuild: say so instead of drawing nothing
     return () => { dead = true; cleanups.forEach((f) => f()); if (flowTimer.current) clearInterval(flowTimer.current); cy.current?.destroy(); cy.current = null; };
   }, [fit]);
 
@@ -183,6 +187,21 @@ export default function MoneyGraph({ graph, onNode }: { graph: Graph | null; onN
     if (firstDraw || reducedMotion()) fit();
   }, [graph, ready, size, fit, stopFlow]);
 
+  useEffect(() => {
+    const c = cy.current;
+    if (!c || flowTimer.current) return;
+    c.elements().removeClass("cite dim");
+    if (!cite?.length) return;
+    const hit = c.collection();
+    for (const id of cite) {
+      const el = c.getElementById(id);
+      if (el.nonempty()) hit.merge(el.isEdge() ? el.union(el.connectedNodes()) : el);
+    }
+    if (hit.empty()) return;
+    hit.addClass("cite");
+    c.elements().not(hit).not("node[role='axis']").addClass("dim");
+  }, [cite, graph, ready]);
+
   // Trace Flow: replay the transfers one at a time, in the order the money moved.
   const traceFlow = () => {
     const c = cy.current;
@@ -216,15 +235,20 @@ export default function MoneyGraph({ graph, onNode }: { graph: Graph | null; onN
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else el.requestFullscreen?.().catch(() => {});  // optional: some phones and embedded views refuse it
   };
-  const ctl = "tl bg-bg px-2.5 py-1.5 text-ink transition-colors hover:bg-ink hover:text-bg disabled:opacity-40";
+  const ctl = "tl border border-line-hi bg-panel px-2.5 py-1.5 text-ink transition-colors hover:bg-raised disabled:opacity-40";
   return (
     <div ref={frame} className="blueprint absolute inset-0" role="img" aria-label="Money trail: columns are hops in time order, from source accounts on the left to exits on the right. The table view lists the same transfers.">
       {/* cytoscape forces position:relative on its container, so the container sits inside the absolute wrapper */}
       <div ref={box} className="h-full w-full" />
+      {broken && (
+        <p className="absolute inset-x-4 top-1/2 -translate-y-1/2 text-center font-sans text-[15px] text-ink" role="alert">
+          The graph didn’t load. <button onClick={() => location.reload()} className="text-sel-line underline">Reload the page</button>, or use Table view.
+        </p>
+      )}
       {graph && (
         <div className="absolute right-3 top-2.5 z-10 grid justify-items-end gap-1.5">
-          <div className="flex gap-px border border-line-hi bg-line-hi">
-            <button onClick={traceFlow} className={`${ctl} ${step ? "bg-red text-bg hover:bg-red" : ""}`} aria-pressed={!!step}>
+          <div className="flex gap-1">
+            <button onClick={traceFlow} className={`${ctl} ${step ? "border-red bg-red-soft text-red hover:bg-red-soft" : ""}`} aria-pressed={!!step}>
               <span aria-hidden>{step ? "■ " : "▶ "}</span>{step ? "Stop" : "Trace Flow"}
             </button>
             <button onClick={() => zoomBy(1.25)} className={ctl} aria-label="Zoom In"><span aria-hidden>+</span></button>
@@ -232,13 +256,13 @@ export default function MoneyGraph({ graph, onNode }: { graph: Graph | null; onN
             <button onClick={fit} className={ctl}>Fit</button>
             <button onClick={expand} className={ctl} aria-label="Expand Graph to Full Screen" title="Full screen (Esc to exit)"><span aria-hidden>⤢</span></button>
           </div>
-          <p className="tl msg num max-w-[min(420px,80vw)] truncate border border-line-hi bg-bg px-2 py-1 text-[12px] text-ink empty:hidden" aria-live="polite">
-            {step && <><span className="text-red">{String(step.i).padStart(2, "0")}/{String(step.n).padStart(2, "0")}</span> {step.text}</>}
+          <p className="tl msg num max-w-[min(420px,80vw)] truncate rounded-md border border-line-hi bg-panel px-2.5 py-1 text-[12.5px] text-ink empty:hidden" aria-live="polite">
+            {step && <><span className="text-red">{step.i}/{step.n}</span> {step.text}</>}
           </p>
         </div>
       )}
       {tip && (
-        <div className="tl pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-[calc(100%+16px)] whitespace-nowrap border border-ink bg-bg px-2.5 py-1.5"
+        <div className="tl pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-[calc(100%+16px)] whitespace-nowrap rounded-lg border border-line-hi bg-panel px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.10)]"
           style={{ left: tip.x, top: tip.y }}>
           <div><span className="text-[15px] font-semibold text-ink">{tip.value}</span> <span className="text-muted">{tip.unit}</span></div>
           {tip.lines.map((l) => <div key={l} className="msg font-sans text-[13px] text-ink-2">{l}</div>)}

@@ -1,0 +1,75 @@
+{
+  "model": "LightGBM gradient-boosted trees (binary classifier)",
+  "explanation": "Exact TreeSHAP contributions (log-odds)",
+  "features": [
+    {
+      "name": "passthrough_ratio",
+      "monotone": 1
+    },
+    {
+      "name": "fast_forward_share",
+      "monotone": 1
+    },
+    {
+      "name": "min_minutes_to_forward",
+      "monotone": -1
+    },
+    {
+      "name": "max_senders_1h",
+      "monotone": 1
+    },
+    {
+      "name": "max_receivers_1h",
+      "monotone": 0
+    },
+    {
+      "name": "near_threshold_deposits",
+      "monotone": 1
+    },
+    {
+      "name": "cash_share",
+      "monotone": 0
+    },
+    {
+      "name": "dormancy_days",
+      "monotone": 1
+    },
+    {
+      "name": "account_age_days",
+      "monotone": -1
+    },
+    {
+      "name": "kyc_risk",
+      "monotone": 1
+    },
+    {
+      "name": "shared_device_accounts",
+      "monotone": 1
+    },
+    {
+      "name": "volume_vs_expected",
+      "monotone": 1
+    }
+  ],
+  "trained_on": "5903 accounts from 6 synthetic banks of different sizes (1863 mule accounts; legitimate look-alikes: payroll, merchants, cash shops, savings sweeps)",
+  "holdout": {
+    "description": "A separate synthetic bank the model never saw",
+    "auc": 0.982,
+    "precision": 0.955,
+    "recall": 0.858,
+    "threshold": 0.5,
+    "accounts": 1014,
+    "mules": 374,
+    "false_alarms_on_ordinary_customers": 0.018
+  },
+  "top_features": [
+    "account_age_days",
+    "max_receivers_1h",
+    "fast_forward_share",
+    "dormancy_days",
+    "kyc_risk"
+  ],
+  "trained": "2026-10-17T19:16:10",
+  "rounds": 300,
+  "caveat": "Synthetic training data. Validate on real labelled data before production use."
+}

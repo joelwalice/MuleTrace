@@ -9,19 +9,19 @@ const archivoBlack = Archivo_Black({ variable: "--font-archivo-black", subsets: 
 
 const description = "Live AML investigation console. Groups alerts into mule rings, traces the money in time order and drafts the FIU-IND STR.";
 export const metadata: Metadata = {
-  title: "MuleTrace SOC",
+  title: "MuleTrace",
   description,
   applicationName: "MuleTrace",
-  openGraph: { title: "MuleTrace SOC", description, type: "website" },
-  twitter: { card: "summary", title: "MuleTrace SOC", description },
+  openGraph: { title: "MuleTrace", description, type: "website" },
+  twitter: { card: "summary", title: "MuleTrace", description },
 };
-export const viewport: Viewport = { viewportFit: "cover", themeColor: "#0a0a0a", colorScheme: "dark" };
+export const viewport: Viewport = { viewportFit: "cover", themeColor: "#f3f2ee", colorScheme: "light" };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${plexSans.variable} ${plexMono.variable} ${archivoBlack.variable} antialiased`}>
       <head><link rel="preconnect" href={API} crossOrigin="anonymous" /></head>
-      <body className="crt">{children}</body>
+      <body>{children}</body>
     </html>
   );
 }

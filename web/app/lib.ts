@@ -1,4 +1,6 @@
 export const API = process.env.NEXT_PUBLIC_API ?? "http://localhost:8000";
+// Copilot Studio → Channels → Web app → the iframe's src. Unset: the Ask Copilot button stays hidden.
+export const COPILOT_URL = process.env.NEXT_PUBLIC_COPILOT_URL ?? "";
 
 export type Sev = "high" | "medium" | "low";
 export type Txn = {
@@ -16,9 +18,10 @@ export type Network = {
 };
 export type Snapshot = {
   version: number; clock: string; running: boolean; speed: number; speeds: number[]; feed_rate: number;
-  queued: number; autopilot: boolean; attacks: Attack[];
+  queued: number; autopilot: boolean; attacks: Attack[]; policy: Policy; model_version: number;
+  cases: { case_id: string; network_id: string; status: CaseStatus }[]; labels: { mule: number; not_mule: number };
   stats: { transactions: number; alerts: number; networks: number; total_in: number; frozen: number; cases: number };
-  hourly: number[]; alerts: Alert[]; networks: Network[]; feed: Txn[];
+  alerts: Alert[]; networks: Network[]; feed: Txn[];
 };
 export type Attack = { id: string; kind: "structuring" | "chain" | "fan"; label: string; started: string; total: number; left: number };
 export const ATTACKS: { kind: Attack["kind"]; label: string; key: string; hint: string }[] = [
@@ -36,15 +39,65 @@ export type Detail = {
   freeze?: string[]; sources?: string[]; mules?: string[]; exits?: string[]; accounts?: string[]; alerted?: string[]; total_in?: number;
   // alert-only
   upstream?: string[]; downstream?: string[]; lateral?: string[]; reasons?: string[];
+  checklist: Check[];
+};
+export type Check = { item: string; status: "supported" | "missing"; evidence?: string; needs?: string };
+
+// Evidence bundles: what the rules saw, with the transaction ids behind every figure (also what Copilot Studio quotes).
+export type Confidence = "high" | "medium" | "low" | "insufficient";
+export type Computation = { name: string; value: number; formula: string; inputs: string[]; pattern?: string };
+export type EvTxn = { id: string; ts: string; sender: string; receiver: string; amount: number; channel: string; relation: string; why?: string };
+export type NextQ = { q: string; action: "trace" | "compare" | "str"; target?: string; accounts?: string[] };
+// Explainable classifier (xai.py): probability plus exact per-behaviour contributions in log-odds.
+export type AiReason = { feature: string; text: string; value: number | null; contribution: number };
+export type AiExplanation = {
+  account_id?: string; model_version?: number; score: number; raw: number; base: number; reasons: AiReason[]; contributions: AiReason[]; scored_by: string; note: string | null;
+  model?: { name: string; explanation: string; holdout: { auc: number; precision: number; recall: number; false_alarms_on_ordinary_customers?: number } };
+};
+export type AiRing = { scored_by: string; ai_only: string[]; accounts: { account_id: string; score: number; alerted: boolean; source: boolean; top: string }[] };
+export const aiBand = (s: number) => (s >= 0.85 ? "high" : s >= 0.5 ? "medium" : "low") as Sev;
+
+export type Evidence = {
+  alert_id?: string; network_id: string; account_id?: string; confidence: Confidence; claim: string; severity: Sev; score: number;
+  computations: Computation[]; transactions: EvTxn[]; gaps: string[]; next_questions: NextQ[];
+  ai?: AiExplanation | null; ai_accounts?: AiRing | null;
+};
+export type Compare = {
+  accounts: string[]; connected: boolean; confidence: Confidence; summary: string;
+  direct_transfers: Omit<EvTxn, "relation">[]; shared_devices: { device: string; accounts: string[] }[];
+  same_ring: { network_id: string; accounts: string[] }[]; common_counterparties: { account: string; linked: string[] }[];
+};
+export const CONFIDENCE: Record<Confidence, { label: string; bars: number }> = {
+  high: { label: "High", bars: 3 }, medium: { label: "Medium", bars: 2 }, low: { label: "Low", bars: 1 }, insufficient: { label: "Insufficient", bars: 0 },
+};
+
+export const RULES = ["structuring", "passthrough", "fan_in_out", "dormant", "shared_device"] as const;
+export type Policy = {
+  rules: (typeof RULES)[number][]; band_floor: number; pass_ratio: number; min_pass: number; fan: number; dormant_days: number;
+};
+export const DEFAULT_POLICY: Policy = { rules: [...RULES], band_floor: 45000, pass_ratio: 0.8, min_pass: 50000, fan: 5, dormant_days: 90 };
+export type Replay = {
+  before: { alerts: number; rings: number }; after: { alerts: number; rings: number };
+  removed: string[]; added: string[]; lost_rings: string[]; new_rings: number;
+};
+export type Evaluation = { status: "not run"; how: string } | {
+  status: "ok"; dataset: string; rows_read: number | "all"; precision: number; recall: number; lift: number; base_rate: number;
+  alerts: number; caught: number; laundering_accounts: number; accounts: number; transactions: number;
+  attempts?: number; attempts_caught?: number; attempt_recall?: number; run_on: string;
 };
 export type Profile = {
   account_id: string; name: string; type: string; open_date: string; home_branch: string; kyc_risk: number;
   risk: number; frozen: boolean; total_received: number; unique_senders: number; total_sent: number;
   unique_receivers: number; passthrough_pct: number; avg_minutes_to_forward: number | null;
-  devices: string[]; ips: string[]; alerts: Alert[]; txns: Txn[];
+  devices: string[]; ips: string[]; alerts: Alert[]; txns: Txn[]; label: boolean | null;
 };
 export type Sel = { kind: "network" | "alert"; id: string } | null;
-export type Case = { case_id: string; frozen: string[]; review: string[]; webhook: string };
+export type CaseStatus = "open" | "str_filed" | "closed";
+export type Case = {
+  case_id: string; network_id: string; frozen: string[]; review: string[]; webhook: string; status: CaseStatus;
+  ack?: string; opened: string; events: { at: string; text: string }[];
+};
+export const CASE_STATUS: Record<CaseStatus, string> = { open: "Open", str_filed: "STR Filed", closed: "Closed" };
 
 export async function get<T>(path: string): Promise<T> {
   const r = await fetch(API + path);

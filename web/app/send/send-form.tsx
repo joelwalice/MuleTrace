@@ -78,14 +78,14 @@ export default function SendForm() {
                   { sender: tag, receiver: `${tag}-EXIT`, amount: 230000, channel: "imps" as const }] },
   ];
 
-  const field = "w-full border border-line-hi bg-bg px-3 py-2.5 font-mono text-[15px] uppercase text-ink placeholder:normal-case placeholder:text-muted focus:border-ink focus:outline-none";
+  const field = "w-full border border-line-hi bg-panel px-3 py-2.5 font-mono text-[15px] uppercase text-ink rounded-md placeholder:font-sans placeholder:normal-case placeholder:text-muted focus:border-ink focus:outline-none";
   const label = "tl mb-1.5 block text-ink-2";
   const err = (k: keyof typeof errors) => errors[k] && <p id={`${k}-err`} className="msg mt-1.5 font-sans text-[13px] text-red" role="alert">{errors[k]}</p>;
 
   return (
     <main className="mx-auto grid min-h-dvh max-w-lg content-start gap-px bg-line pb-[env(safe-area-inset-bottom,0px)]">
       <header className="bg-bg px-4 pb-4 pt-[max(16px,env(safe-area-inset-top,0px))]">
-        <a href="/" className="tl text-muted hover:text-ink">← MuleTrace Console</a>
+        <a href="/" className="tl text-muted hover:text-ink">← MuleTrace Dashboard</a>
         <h1 className="macro mt-3 text-[40px] text-ink">Send a Transfer</h1>
         <p className="mt-2 font-sans text-[15px] text-ink-2">
           Your money goes into the live bank on the big screen. Try to move it like a mule and see if the rules catch you.
@@ -122,21 +122,21 @@ export default function SendForm() {
           </div>
           <div>
             <label htmlFor="channel" className={label}>Channel</label>
-            <select id="channel" name="channel" className={`${field} bg-bg text-ink`} value={form.channel}
+            <select id="channel" name="channel" className={`${field} text-ink`} value={form.channel}
               onChange={(e) => setForm({ ...form, channel: e.target.value as Transfer["channel"] })}>
-              {CHANNELS.map((c) => <option key={c} value={c} className="bg-bg text-ink">{c.toUpperCase()}</option>)}
+              {CHANNELS.map((c) => <option key={c} value={c} className="bg-panel text-ink">{c.toUpperCase()}</option>)}
             </select>
           </div>
         </div>
         {errors.form && <p id="form-err" className="msg font-sans text-[13px] text-red" role="alert">{errors.form}</p>}
         <button type="submit" disabled={busy}
-          className="tl bg-ink py-3 text-[13px] font-semibold text-bg transition-colors hover:bg-red active:translate-y-px disabled:opacity-60">
+          className="tl rounded-md bg-ink py-3 text-[14px] font-semibold text-panel transition-opacity hover:opacity-90 active:scale-[0.98] disabled:opacity-60">
           {busy ? "Sending…" : "Send Transfer"}
         </button>
       </form>
 
       <section className="bg-bg px-4 py-5" aria-labelledby="try-h">
-        <h2 id="try-h" className="tl text-red"><span aria-hidden>[ </span>Try to Fool It<span aria-hidden> ]</span></h2>
+        <h2 id="try-h" className="tl text-red">Try to Fool It</h2>
         <div className="mt-3 grid gap-px bg-line">
           {scenarios.map((sc) => (
             <button key={sc.label} disabled={busy} onClick={() => send(sc.run())}
@@ -150,14 +150,14 @@ export default function SendForm() {
 
       {(caught.length > 0 || sent.length > 0) && (
         <section className="bg-bg px-4 py-5" aria-labelledby="mine-h" aria-live="polite">
-          <h2 id="mine-h" className="tl text-ink"><span aria-hidden>[ </span>Your Activity<span aria-hidden> ]</span></h2>
+          <h2 id="mine-h" className="tl text-ink">Your Activity</h2>
           {caught.map((a) => (
-            <a key={a.alert_id} href={`/?alert=${a.alert_id}`} className="mt-3 block border border-red px-3 py-2.5 transition-colors hover:bg-red hover:text-bg">
+            <a key={a.alert_id} href={`/?alert=${a.alert_id}`} className="mt-3 block rounded-lg border border-red bg-red-soft px-3 py-2.5 transition-colors hover:bg-panel">
               <span className="tl text-red"><span aria-hidden>▲ </span>Caught · {a.alert_id}</span>
               <span className="msg mt-1 block font-sans text-[14px]">
                 <span translate="no" className="font-mono">{a.account_id}</span> flagged for {a.pattern.split("+").map((p) => PATTERN[p]).join(", ")}. {a.reasons[0]}.
               </span>
-              <span className="tl mt-1 block text-[11.5px] text-ink-2">Open in Console →</span>
+              <span className="tl mt-1 block text-[11.5px] text-ink-2">Open on the Dashboard →</span>
             </a>
           ))}
           <ul className="mt-3 font-mono text-[13px] uppercase">

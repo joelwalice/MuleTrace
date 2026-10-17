@@ -17,23 +17,45 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from io import StringIO
+from statistics import median
+
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 import muletrace as mt
+import xai
 from muletrace import inr
 
 TICK = 0.25          # real seconds per tick
 FEED_RATE = 2.0      # ordinary transactions per real second
 SPEEDS = (1, 10, 30, 60)
 RING_LABEL = {"structuring": "Structuring", "chain": "Pass-Through Chain", "fan": "Fan-In / Fan-Out"}
+DATA = Path(__file__).parent / "data"
+
+
+class Policy(BaseModel):
+    """Detection policy. Defaults reproduce the rules the demo and the self-check are built on."""
+    rules: list[Literal[*mt.RULES]] = Field(default=list(mt.RULES), description="Rules switched on")
+    band_floor: int = Field(45000, ge=30000, le=49000, description="Structuring: lowest cash deposit counted (₹); the ceiling is the ₹50,000 PAN threshold")
+    pass_ratio: float = Field(0.8, ge=0.5, le=1.0, description="Pass-through: share of a deposit sent onward within 30 min")
+    min_pass: int = Field(50000, ge=10000, le=1000000, description="Pass-through: smallest deposit checked (₹)")
+    fan: int = Field(5, ge=2, le=20, description="Fan-in/fan-out: more than this many senders and receivers within 1h")
+    dormant_days: int = Field(90, ge=30, le=365, description="Dormant: days without activity before a large transfer")
+
+    def kwargs(self):
+        return dict(band=(self.band_floor, 50000), min_pass=self.min_pass, rules=set(self.rules), ratio=self.pass_ratio,
+                    fan=self.fan, dormant_days=self.dormant_days)
 
 
 class Live:
     def __init__(self):
-        self.requests = deque()  # injections and transfers from the API, applied inside the tick (never mid-detection)
+        self.sent = (None, "")  # (version, serialised snapshot): every SSE client shares one serialisation
+        self.requests = deque()  # injections, transfers and policy changes, applied inside the tick (never mid-detection)
+        self.policy = Policy()  # survives New Bank: it's the analyst's setting, not the bank's data
         self.reset()
 
     def reset(self):
@@ -43,6 +65,7 @@ class Live:
         self.seq, self.clock, self.running, self.speed, self.version = len(self.txns), now, True, 30, 0
         self.queue, self.attacks, self.autopilot, self.next_auto = [], [], False, 0.0
         self.frozen, self.cases, self.net_status, self.alert_ids, self.net_ids = set(), [], {}, {}, {}
+        self.labels = {}  # account id -> True (confirmed mule) / False (not a mule): analyst feedback for retraining
         self.recompute()
 
     @property
@@ -76,7 +99,10 @@ class Live:
         changed = bool(self.requests)
         while self.requests:
             kind, arg = self.requests.popleft()
-            self._inject(arg) if kind == "inject" else self._ingest(arg)
+            if kind == "policy":
+                self.policy = arg
+            else:
+                self._inject(arg) if kind == "inject" else self._ingest(arg)
         if not self.running:
             return changed
         start, self.clock = self.clock, self.clock + timedelta(seconds=TICK * self.speed)
@@ -100,7 +126,7 @@ class Live:
     def recompute(self):
         txns = self.txns
         inc, out, devs = mt.index(txns)
-        alerts = mt.detect(self.accounts, inc, out, devs)
+        alerts = mt.detect(self.accounts, inc, out, devs, **self.policy.kwargs())
         for a in alerts:  # stable ids: first time an account alerts, it keeps that id
             a["alert_id"] = self.alert_ids.setdefault(a["account_id"], f"AL-{101 + len(self.alert_ids)}")
         nets = mt.networks(alerts, inc, out, devs)
@@ -119,25 +145,24 @@ class Live:
         return max((a["score"] for a in self.alerts if a["account_id"] == aid), default=self.accounts[aid]["kyc_risk"] * 0.5)
 
     def alert_view(self, a):
-        return {**a, "network_id": self.net_of[a["alert_id"]], "status": "frozen" if a["account_id"] in self.frozen else "new"}
+        return {k: v for k, v in a.items() if k != "evidence"} | {
+            "network_id": self.net_of[a["alert_id"]], "status": "frozen" if a["account_id"] in self.frozen else "new"}
 
     def net_view(self, n):
         return {k: v for k, v in n.items() if k not in ("edges", "devices")} | {"status": self.net_status.get(n["network_id"], "open")}
 
     def snapshot(self):
-        hours = [0] * 48  # txn count per bank-clock hour, last 48h
-        for t in self.txns[-6000:]:
-            h = int((self.clock - t["ts"]).total_seconds() // 3600)
-            if 0 <= h < 48:
-                hours[47 - h] += 1
         alerted = {a["account_id"] for a in self.alerts}
         return dict(version=self.version, clock=self.clock, running=self.running, speed=self.speed, speeds=SPEEDS,
-                    feed_rate=FEED_RATE, queued=len(self.queue), autopilot=self.autopilot,
+                    feed_rate=FEED_RATE, queued=len(self.queue), autopilot=self.autopilot, policy=self.policy.model_dump(),
+                    model_version=CARD.get("version", 1),
                     attacks=[{k: v for k, v in a.items() if k != "accounts"} for a in self.attacks[-6:]][::-1],
+                    cases=[{k: c[k] for k in ("case_id", "network_id", "status")} for c in self.cases],
+                    labels=dict(mule=sum(self.labels.values()), not_mule=len(self.labels) - sum(self.labels.values())),
                     stats=dict(transactions=len(self.txns), alerts=len(self.alerts), networks=len(self.nets),
                                total_in=round(sum(n["total_in"] for n in self.nets), 2), frozen=len(self.frozen),
                                cases=len(self.cases)),
-                    hourly=hours, alerts=[self.alert_view(a) for a in self.alerts],
+                    alerts=[self.alert_view(a) for a in self.alerts],
                     networks=[self.net_view(n) for n in self.nets],
                     feed=[dict(t, suspicious=t["sender_account"] in alerted or t["receiver_account"] in alerted)
                           for t in self.txns[-40:][::-1]])
@@ -161,7 +186,7 @@ async def lifespan(_):
     task.cancel()
 
 
-mt.export(Path(__file__).parent / "data", mt.ACCOUNTS, mt.TXNS, mt.ALERTS, mt.NETWORKS)
+mt.export(DATA, mt.ACCOUNTS, mt.TXNS, mt.ALERTS, mt.NETWORKS)
 app = FastAPI(title="MuleTrace", lifespan=lifespan,
               description="AML SOC: mule network detection with time-ordered money trails (INR, FIU-IND STR)")
 app.add_middleware(CORSMiddleware, allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(","),
@@ -221,7 +246,9 @@ async def stream():
         while True:
             if LIVE.version != seen:
                 seen, idle = LIVE.version, 0
-                yield f"data: {json.dumps(LIVE.snapshot(), default=iso)}\n\n"
+                if LIVE.sent[0] != seen:
+                    LIVE.sent = (seen, json.dumps(LIVE.snapshot(), default=iso))
+                yield f"data: {LIVE.sent[1]}\n\n"
             elif (idle := idle + 1) % 60 == 0:
                 yield ": keepalive\n\n"
             await asyncio.sleep(TICK)
@@ -295,25 +322,26 @@ def stats():
     return LIVE.snapshot()["stats"]
 
 
-@app.get("/alerts", summary="Alert queue, highest score first")
+@app.get("/alerts", operation_id="listAlerts", summary="Alert queue, highest score first. Each alert names the ring (network_id) it belongs to.")
 def alerts():
     return [LIVE.alert_view(a) for a in LIVE.alerts]
 
 
-@app.get("/networks", summary="Alerts grouped into mule rings")
+@app.get("/networks", operation_id="listRings", summary="Mule rings (networks): alerts grouped by linked money and devices")
 def networks():
     return [LIVE.net_view(n) for n in LIVE.nets]
 
 
-@app.get("/account/{account_id}", summary="Account 360 / receiver-mule profile")
+@app.get("/account/{account_id}", operation_id="getAccount", summary="Account 360: KYC, money in and out, pass-through %, devices, alerts and the last 50 transactions")
 def account(account_id: str):
     lookup(LIVE.accounts, account_id, "account")
     return {**mt.profile(account_id, LIVE.accounts, LIVE.inc, LIVE.out), "risk": LIVE.risk(account_id),
+            "label": LIVE.labels.get(account_id),
             "frozen": account_id in LIVE.frozen,
             "alerts": [LIVE.alert_view(a) for a in LIVE.alerts if a["account_id"] == account_id]}
 
 
-@app.get("/alert/{alert_id}/graph", summary="Money-trail graph for one alert")
+@app.get("/alert/{alert_id}/graph", operation_id="traceAlertMoney", summary="Time-ordered money trail for one alert: every transfer (id, amount, time) upstream and downstream")
 def alert_graph(alert_id: str):
     a = lookup(LIVE.alert_by, alert_id, "alert")
     edges, up, down, lateral = mt.trace(a["account_id"], a["ts"], LIVE.inc, LIVE.out, LIVE.devs)
@@ -321,7 +349,7 @@ def alert_graph(alert_id: str):
     return graph(edges, mt.device_links({a["account_id"]} | lateral, LIVE.out, LIVE.devs), role)
 
 
-@app.get("/alert/{alert_id}", summary="Alert detail with plain-English explanation and STR draft (Copilot grounding)")
+@app.get("/alert/{alert_id}", operation_id="draftAlertStr", summary="Alert detail: plain-English explanation, STR draft for FIU-IND and its completeness checklist")
 def alert(alert_id: str):
     a = LIVE.alert_view(lookup(LIVE.alert_by, alert_id, "alert"))
     p = mt.profile(a["account_id"], LIVE.accounts, LIVE.inc, LIVE.out)
@@ -338,19 +366,22 @@ def alert(alert_id: str):
                  f"Money trail: Sources: {names(up)}. Recipients: {names(down)}. Accounts sharing a device: {names(lateral)}.\n\n"
                  f"Grounds for suspicion: Activity is consistent with a money mule account layering funds as part of "
                  f"network {a['network_id']}. Recommended: freeze, file STR within 7 working days, review linked accounts, re-KYC.")
+    cited = list(dict.fromkeys(i for ev in LIVE.alert_by[alert_id]["evidence"] for c in ev["computations"]
+                               for i in c["inputs"] if i.startswith("TX")))
     return {**a, "explanation": explanation, "str_draft": str_draft,
+            "checklist": checklist([a["account_id"]], cited, bool(up or down), sorted(lateral)),
             "upstream": sorted(up), "downstream": sorted(down), "lateral": sorted(lateral),
             "account": {k: v for k, v in p.items() if k != "txns"}}
 
 
-@app.get("/network/{network_id}/graph", summary="Money-trail graph for a whole mule ring")
+@app.get("/network/{network_id}/graph", operation_id="traceRingMoney", summary="Time-ordered money trail for a whole ring: every transfer from source accounts to exits")
 def network_graph(network_id: str):
     n = lookup(LIVE.net_by, network_id, "network")
     role = lambda i: "subject" if i in n["alerted"] else "source" if i in n["sources"] else "member"
     return graph(n["edges"], n["devices"], role)
 
 
-@app.get("/network/{network_id}", summary="Mule ring summary and network STR draft (Copilot grounding)")
+@app.get("/network/{network_id}", operation_id="draftRingStr", summary="Ring summary: sources, mules, exits, STR draft for FIU-IND and its completeness checklist")
 def network(network_id: str):
     n = lookup(LIVE.net_by, network_id, "network")
     mules = sorted(set(n["freeze"]) - set(n["exits"]))
@@ -368,23 +399,367 @@ def network(network_id: str):
                  f"Grounds for suspicion: Rapid pass-through, sub-threshold deposits and shared devices across accounts "
                  f"with no apparent economic purpose indicate layering of proceeds of crime.\n"
                  f"Action: freeze mule and exit accounts, review sources, file STR within 7 working days, notify LEA if fraud victims identified.")
-    return LIVE.net_view(n) | {"explanation": explanation, "str_draft": str_draft, "mules": mules}
+    return LIVE.net_view(n) | {"explanation": explanation, "str_draft": str_draft, "mules": mules,
+                               "checklist": checklist(n["alerted"], [e["txn_id"] for e in n["edges"]], bool(n["edges"]),
+                                                      sorted({a for a, _ in n["devices"]}))}
 
 
-@app.post("/network/{network_id}/dismantle", summary="Freeze mule + exit accounts (simulated), open case, trigger Power Automate")
+@app.post("/network/{network_id}/dismantle", operation_id="dismantleRing", summary="Freeze mule and exit accounts (simulated), open a case and trigger the Power Automate playbook. Only call after the analyst confirms.")
 def dismantle(network_id: str):
     n = lookup(LIVE.net_by, network_id, "network")
+    if LIVE.net_status.get(network_id) == "dismantled":
+        raise HTTPException(409, f"{network_id} is already dismantled")
     detail = network(network_id)
     LIVE.frozen.update(n["freeze"])
+    for a in n["freeze"]:  # a dismantled ring is a confirmed label for the classifier; sources stay unlabelled (may be victims)
+        LIVE.labels.setdefault(a, True)
     LIVE.net_status[network_id] = "dismantled"
     case = dict(case_id=f"CASE-{len(LIVE.cases) + 1:03d}", network_id=network_id, alert_ids=n["alert_ids"],
                 frozen=n["freeze"], review=n["sources"], summary=detail["explanation"], str_draft=detail["str_draft"],
-                status="open")
+                status="open", opened=LIVE.clock, events=[])
+    k, r = len(n["freeze"]), len(n["sources"])
+    log(case, f"Ring dismantled: {k} account{'s' * (k != 1)} locked, {r} sent to review")
     LIVE.cases.append(case)
     LIVE.version += 1
     return {**case, "webhook": notify({**case, "score": n["score"], "total_in": n["total_in"]})}
 
 
-@app.get("/cases", summary="Open cases")
+def log(case, text):
+    case["events"].append(dict(at=LIVE.clock, text=text))
+
+
+@app.get("/cases", operation_id="listCases", summary="Cases with status (open → STR filed → closed) and their audit trail")
 def cases():
     return LIVE.cases
+
+
+@app.post("/case/{case_id}/{action}", summary="Move a case on: file the STR with FIU-IND (simulated), or close it")
+def case_action(case_id: str, action: Literal["file_str", "close"]):
+    c = lookup({c["case_id"]: c for c in LIVE.cases}, case_id, "case")
+    if action == "file_str":
+        if c["status"] != "open":
+            raise HTTPException(409, f"{case_id} is {c['status'].replace('_', ' ')}")
+        c["ack"] = f"FIU-ACK-{random.randint(100000, 999999)}"
+        c["status"] = "str_filed"
+        log(c, f"STR filed with FIU-IND (simulated) · acknowledgement {c['ack']}")
+    else:
+        if c["status"] == "closed":
+            raise HTTPException(409, f"{case_id} is already closed")
+        c["status"] = "closed"
+        log(c, "Case closed")
+    LIVE.version += 1
+    c["webhook"] = notify({k: v for k, v in c.items() if k != "events"})
+    return c
+
+
+@app.post("/account/{account_id}/label", summary="Analyst verdict on an account (feeds the classifier's next retrain)")
+def label_account(account_id: str, mule: bool | None = None):
+    lookup(LIVE.accounts, account_id, "account")
+    if mule is None:
+        LIVE.labels.pop(account_id, None)
+    else:
+        LIVE.labels[account_id] = mule
+    LIVE.version += 1
+    return {"account_id": account_id, "label": LIVE.labels.get(account_id), "labels": len(LIVE.labels)}
+
+
+# -- Investigation Copilot: evidence bundles, comparisons, STR checklist -----------------------------------------
+# Every number here comes from the rules, with the transaction ids it rests on, so Copilot Studio can quote
+# and cite but never has to calculate. "insufficient" means: don't conclude, show the gaps.
+CONF_ORDER = ["high", "medium", "low", "insufficient"]
+WALK_IN = "Hackathon Floor"
+
+
+def row(t, **extra):
+    return dict(id=t["txn_id"], ts=t["ts"], sender=t["sender_account"], receiver=t["receiver_account"],
+                amount=t["amount"], channel=t["channel"], **extra)
+
+
+def walk_ins(ids):
+    return [a for a in ids if LIVE.accounts[a]["home_branch"] == WALK_IN]
+
+
+def gaps(subjects, edges, conf, pattern):
+    g = []
+    if conf == "insufficient":
+        if set(pattern.split("+")) <= {"shared_device"}:
+            g.append("Only the shared-device rule fired; no money-movement rule supports it")
+        if len(edges) < 2:
+            g.append("Fewer than 2 transfers of ₹25,000 or more in the 72h money trail")
+    if w := walk_ins(subjects):
+        g.append(f"No KYC documents on file for walk-in account(s) {', '.join(w)}")
+    senders = {e["sender_account"] for e in edges}
+    exits = sorted({e["receiver_account"] for e in edges} - senders)
+    if exits:
+        g.append(f"The trail leaves this bank's records at {', '.join(exits[:3])}{' and others' if len(exits) > 3 else ''}; "
+                 "beyond that needs the receiving bank's records")
+    return g + ["No beneficial-owner records in this dataset", "No customer explanation or source-of-funds documents on file"]
+
+
+def item(label, ok, evidence=None, needs=None):
+    return dict(item=label, status="supported", evidence=evidence) if ok else dict(item=label, status="missing", needs=needs)
+
+
+def checklist(subjects, cited, trail, linked):
+    w = walk_ins(subjects)
+    return [item("Subject identity and KYC", not w, ", ".join(subjects), f"KYC documents for {', '.join(w)}"),
+            item("Suspicious pattern, with transactions", bool(cited), ", ".join(cited[:4]) + (" …" if len(cited) > 4 else ""),
+                 "At least one rule hit with its transactions"),
+            item("Money trail: sources and recipients", trail, "Time-ordered trail (see the money-trail tool)",
+                 "Transfers in or out of the subject in the 72h window"),
+            item("Linked accounts or shared devices", bool(linked), ", ".join(linked[:6]),
+                 "A check with other banks through FIU-IND (none found in this bank's data)"),
+            item("Beneficial owner", False, needs="Beneficial-owner declaration for each subject"),
+            item("Source of funds", False, needs="Customer explanation or source-of-funds documents"),
+            item("Principal Officer sign-off", False, needs="Principal Officer review before the STR is filed with FIU-IND")]
+
+
+def next_questions(subject, network_id, others):
+    q = [dict(q=f"Trace the money through {subject}", action="trace", target=subject)]
+    if others:
+        q.append(dict(q=f"Why are {subject} and {others[0]} connected?", action="compare", accounts=[subject, others[0]]))
+    return q + [dict(q=f"Draft the STR for {network_id}", action="str", target=network_id)]
+
+
+@app.get("/alert/{alert_id}/evidence", operation_id="explainAlert",
+         summary="Why an alert fired: claim, confidence, the transactions cited, computed figures with formulas, and evidence gaps")
+def alert_evidence(alert_id: str):
+    a = lookup(LIVE.alert_by, alert_id, "alert")
+    aid, acc = a["account_id"], LIVE.accounts[a["account_id"]]
+    edges, up, down, lateral = mt.trace(aid, a["ts"], LIVE.inc, LIVE.out, LIVE.devs)
+    pool = {t["txn_id"]: t for t in LIVE.inc[aid] + LIVE.out[aid]}
+    cited = {}
+    for ev in a["evidence"]:
+        for c in ev["computations"]:
+            for i in c["inputs"]:
+                if i in pool and i not in cited:
+                    cited[i] = row(pool[i], relation="trigger" if i == ev["trigger"] else "supports", why=PATTERN[ev["pattern"]])
+    conf = mt.confidence(a, len(edges))
+    return dict(alert_id=alert_id, network_id=LIVE.net_of[alert_id], account_id=aid, name=acc["name"],
+                pattern=a["pattern"], score=a["score"], severity=a["severity"], confidence=conf,
+                claim=f"{aid} ({acc['name']}): " + "; ".join(a["reasons"]) + ".",
+                reasons=a["reasons"],
+                computations=[dict(c, pattern=ev["pattern"]) for ev in a["evidence"] for c in ev["computations"]],
+                transactions=sorted(cited.values(), key=lambda r: r["ts"])[:25],
+                ai=ai_safe([aid]),
+                gaps=gaps([aid], edges, conf, a["pattern"]),
+                next_questions=next_questions(aid, LIVE.net_of[alert_id], sorted(lateral) or sorted(up) or sorted(down)),
+                links=dict(dashboard=f"/?alert={alert_id}", trail=f"/alert/{alert_id}/graph"))
+
+
+@app.get("/network/{network_id}/evidence", operation_id="explainRing",
+         summary="Why a ring is one ring: money in from sources, share reaching exits, hop timing, shared devices, every transfer cited")
+def network_evidence(network_id: str):
+    n = lookup(LIVE.net_by, network_id, "network")
+    edges, srcs, exits = n["edges"], set(n["sources"]), set(n["exits"])
+    alerts = [LIVE.alert_by[i] for i in n["alert_ids"]]
+    per_alert = [dict(alert_id=a["alert_id"], account_id=a["account_id"], pattern=a["pattern"],
+                      confidence=mt.confidence(a, len(edges))) for a in alerts]
+    conf = min((x["confidence"] for x in per_alert), key=CONF_ORDER.index)
+    src_e = [e for e in edges if e["sender_account"] in srcs]
+    exit_e = [e for e in edges if e["receiver_account"] in exits]
+    waits, pairs = [], []  # minutes each account held money before passing it on, within this ring
+    for e in edges:
+        nxt = next((x for x in edges if x["sender_account"] == e["receiver_account"] and x["ts"] >= e["ts"]), None)
+        if nxt:
+            waits.append((nxt["ts"] - e["ts"]).total_seconds() / 60)
+            pairs += [e["txn_id"], nxt["txn_id"]]
+    to_exits = sum(e["amount"] for e in exit_e)
+    comps = [mt.comp("money_in", n["total_in"], "sum of transfers sent by source accounts", [e["txn_id"] for e in src_e]),
+             mt.comp("money_to_exits", round(to_exits, 2), "sum of transfers into exit accounts", [e["txn_id"] for e in exit_e])]
+    if n["total_in"]:
+        comps.append(mt.comp("share_reaching_exits", round(to_exits / n["total_in"], 2), "money_to_exits / money_in",
+                             [e["txn_id"] for e in src_e + exit_e]))
+    if waits:
+        comps.append(mt.comp("median_minutes_held", round(median(waits), 1),
+                             "median minutes an account held money before sending it on", list(dict.fromkeys(pairs))))
+    if n["devices"]:
+        comps.append(mt.comp("accounts_on_shared_devices", len({a for a, _ in n["devices"]}),
+                             "ring accounts that send from a device another account also uses", sorted({d for _, d in n["devices"]})))
+    span = f"{n['first_ts']:%d %b %H:%M}-{n['last_ts']:%H:%M}"
+    pct = round(to_exits / n["total_in"] * 100) if n["total_in"] else 0
+    lead = n["alerted"][0]
+    return dict(network_id=network_id, score=n["score"], severity=n["severity"], confidence=conf, patterns=n["patterns"],
+                claim=f"{network_id}: {inr(n['total_in'])} entered from {len(srcs)} source account(s) and {pct}% of it reached "
+                      f"{len(exits)} exit account(s) between {span}. {len(alerts)} alert(s) belong to this one ring.",
+                alerts=per_alert, computations=comps,
+                transactions=[row(e, relation="source" if e["sender_account"] in srcs else "exit" if e["receiver_account"] in exits
+                                  else "hop") for e in edges][:40],
+                gaps=gaps(n["alerted"], edges, conf, "+".join(n["patterns"])),
+                ai_accounts=ai_ring(n),
+                next_questions=next_questions(lead, network_id, [a for a in n["alerted"] if a != lead]),
+                links=dict(dashboard=f"/?ring={network_id}", trail=f"/network/{network_id}/graph"))
+
+
+@app.get("/compare", operation_id="compareAccounts",
+         summary="Why accounts are connected: direct transfers, shared devices, same ring, common counterparties")
+def compare(accounts: str = Query(description="2 to 10 comma-separated account ids, e.g. AC0508,AC0511")):
+    ids = list(dict.fromkeys(a.strip().upper() for a in accounts.split(",") if a.strip()))
+    if not 2 <= len(ids) <= 10:
+        raise HTTPException(422, "Give 2 to 10 comma-separated account ids")
+    for a in ids:
+        lookup(LIVE.accounts, a, "account")
+    S = set(ids)
+    direct = sorted((t for a in ids for t in LIVE.out[a] if t["receiver_account"] in S), key=mt.TS)
+    used = {}
+    for a in ids:
+        for t in LIVE.out[a]:
+            used.setdefault(t["device_id"], set()).add(a)
+    shared = [dict(device=d, accounts=sorted(x)) for d, x in sorted(used.items()) if len(x) > 1]
+    rings = [dict(network_id=n["network_id"], accounts=sorted(S & set(n["accounts"])))
+             for n in LIVE.nets if len(S & set(n["accounts"])) > 1]
+    seen = {}
+    for a in ids:
+        for x in {t["receiver_account"] for t in LIVE.out[a]} | {t["sender_account"] for t in LIVE.inc[a]}:
+            if x not in S:
+                seen.setdefault(x, set()).add(a)
+    common = [dict(account=x, linked=sorted(v)) for x, v in sorted(seen.items()) if len(v) > 1][:10]
+    kinds = sum(map(bool, (direct, shared, rings)))
+    parts = [f"{len(direct)} direct transfer(s)" if direct else "", f"{len(shared)} shared device(s)" if shared else "",
+             f"same ring {', '.join(r['network_id'] for r in rings)}" if rings else ""]
+    return dict(accounts=ids, connected=kinds > 0,
+                confidence="high" if kinds >= 2 else "medium" if kinds else "insufficient",
+                summary=(f"{', '.join(ids)} are linked by " + "; ".join(p for p in parts if p) + ".") if kinds
+                        else f"No direct transfers, shared devices or common ring between {', '.join(ids)} in this bank's data.",
+                direct_transfers=[row(t) for t in direct[:20]], shared_devices=shared, same_ring=rings, common_counterparties=common)
+
+
+# -- Policy: test rule changes on today's data before switching them on ----------------------------------------
+@app.get("/policy", operation_id="getPolicy", summary="Detection policy in force")
+def get_policy():
+    return LIVE.policy
+
+
+@app.post("/policy/replay", operation_id="replayPolicy",
+          summary="Rerun detection on the current bank with a proposed policy and report what changes. Changes nothing.")
+def replay_policy(p: Policy):
+    accts = dict(LIVE.accounts)  # copy: the live tick may add walk-in accounts while this runs in a worker thread
+    inc, out, devs, cur_nets = LIVE.inc, LIVE.out, LIVE.devs, LIVE.nets
+    before = {a["account_id"] for a in LIVE.alerts}
+    after = mt.detect(accts, inc, out, devs, **p.kwargs())
+    nets = mt.networks(after, inc, out, devs)
+    now = {a["account_id"] for a in after}
+    return dict(policy=p, before=dict(alerts=len(before), rings=len(cur_nets)), after=dict(alerts=len(after), rings=len(nets)),
+                removed=sorted(LIVE.alert_ids.get(a, a) for a in before - now), added=sorted(now - before),
+                lost_rings=[n["network_id"] for n in cur_nets if not set(n["alerted"]) & now],
+                new_rings=sum(not any(set(m["accounts"]) & set(c["accounts"]) for c in cur_nets) for m in nets))
+
+
+@app.post("/policy/apply", summary="Switch the live engine to this policy (takes effect on the next tick)")
+async def apply_policy(p: Policy):
+    LIVE.requests.append(("policy", p))
+    return {"applied": p}
+
+
+# -- Benchmark, Power BI exports and the Copilot Studio connector spec -------------------------------------------
+@app.get("/evaluation", operation_id="getEvaluation",
+         summary="Benchmark on the public IBM AML dataset (labels we didn't create): precision, recall, lift")
+def evaluation():
+    f = DATA / "eval.json"
+    if not f.exists():
+        return {"status": "not run", "how": "python3 eval_ibm.py HI-Small_Trans.csv --patterns HI-Small_Patterns.txt --out data/eval.json"}
+    return {"status": "ok", **json.loads(f.read_text())}
+
+
+@app.get("/export/{table}.csv", response_class=PlainTextResponse, summary="Live tables as CSV for Power BI (Get data → Web)")
+def export_csv(table: Literal["accounts", "transactions", "alerts", "networks"]):
+    rows = dict(mt.tables(dict(LIVE.accounts), LIVE.txns[:], LIVE.alerts, LIVE.nets))[table]
+    if table == "alerts":
+        rows = [r | {"network_id": LIVE.net_of.get(r["alert_id"], "")} for r in rows]
+    if table == "networks":
+        rows = [r | {"status": LIVE.net_status.get(r["network_id"], "open")} for r in rows]
+    buf = StringIO()
+    mt.write_csv(buf, rows)
+    return PlainTextResponse(buf.getvalue(), media_type="text/csv")
+
+
+COPILOT_TOOLS = {"explainAlert", "explainRing", "traceAlertMoney", "traceRingMoney", "compareAccounts", "draftAlertStr",
+                 "draftRingStr", "getAccount", "listAlerts", "listRings", "replayPolicy", "getPolicy", "getEvaluation", "dismantleRing",
+                 "explainAccountRisk", "getModelCard", "listCases"}
+
+
+@app.get("/copilot/openapi.json", include_in_schema=False)
+def copilot_spec(request: Request):
+    """OpenAPI 3.0 spec with only the investigator tools, for Copilot Studio (Add tool → REST API)."""
+    spec = get_openapi(title="MuleTrace Investigator", version="1.0.0", openapi_version="3.0.3",
+                       description="Evidence-grounded AML investigation tools. Every figure comes with the transaction ids it rests on.",
+                       routes=[r for r in app.routes if getattr(r, "operation_id", None) in COPILOT_TOOLS])
+    spec["servers"] = [{"url": os.environ.get("PUBLIC_URL") or str(request.base_url).rstrip("/")}]
+    return spec
+
+
+# -- Explainable classifier (xai.py), served locally or from a Microsoft Foundry managed online endpoint ----------
+# Same contract both ways: feature rows in, {score, reasons[], contributions[]} out. Foundry wins when configured;
+# if it fails, scoring falls back to the local copy of the same model and says so.
+MODEL, CARD = xai.load()
+
+
+def ai_rows(ids):
+    return [xai.features(LIVE.accounts[a], LIVE.inc[a], LIVE.out[a], LIVE.devs, LIVE.clock) for a in ids]
+
+
+def foundry(rows):
+    body = json.dumps({"rows": [[None if v != v else v for v in r] for r in rows]}).encode()  # NaN → null
+    req = urllib.request.Request(os.environ["FOUNDRY_SCORING_URL"], body, {
+        "Content-Type": "application/json", "Authorization": f"Bearer {os.environ.get('FOUNDRY_KEY', '')}"})
+    with urllib.request.urlopen(req, timeout=8) as r:
+        out = json.loads(r.read())
+    return json.loads(out) if isinstance(out, str) else out
+
+
+def ai_explain(ids):
+    rows, note = ai_rows(ids), None
+    if os.environ.get("FOUNDRY_SCORING_URL"):
+        try:
+            return foundry(rows), "Microsoft Foundry endpoint", None
+        except Exception as e:
+            note = f"Foundry endpoint unavailable ({type(e).__name__}); scored with the local copy of the model"
+    if MODEL is None:
+        raise HTTPException(503, "Classifier not trained yet: run `python3 xai.py train`")
+    return xai.explain(MODEL, rows), "local model", note
+
+
+def ai_safe(ids):
+    try:
+        (res,), by, note = ai_explain(ids)
+        return res | {"scored_by": by, "note": note, "model_version": CARD.get("version", 1)}
+    except HTTPException:
+        return None
+
+
+def ai_ring(n):
+    try:
+        res, by, _ = ai_explain(n["accounts"])
+    except HTTPException:
+        return None
+    rows = [dict(account_id=a, score=r["score"], alerted=a in n["alerted"], source=a in n["sources"],
+                 top=r["reasons"][0]["text"] if r["reasons"] else "") for a, r in zip(n["accounts"], res)]
+    return dict(scored_by=by, accounts=sorted(rows, key=lambda r: -r["score"]),
+                ai_only=[r["account_id"] for r in rows if r["score"] >= 0.5 and not r["alerted"]])
+
+
+@app.get("/account/{account_id}/ai", operation_id="explainAccountRisk",
+         summary="Explainable AI: mule-risk probability from the classifier and the behaviours that pushed it up or down")
+def account_ai(account_id: str):
+    lookup(LIVE.accounts, account_id, "account")
+    (res,), by, note = ai_explain([account_id])
+    return dict(account_id=account_id, **res, scored_by=by, note=note, model_version=CARD.get("version", 1),
+                model=dict(name=CARD.get("model"), explanation=CARD.get("explanation"), holdout=CARD.get("holdout")))
+
+
+@app.get("/ai/model", operation_id="getModelCard", summary="Model card: what the classifier is, what it was trained on, and how it scored on held-out data")
+def model_card():
+    return (CARD or {"status": "not trained"}) | {"serving": "Microsoft Foundry endpoint" if os.environ.get("FOUNDRY_SCORING_URL") else "local model"}
+
+
+@app.post("/ai/retrain", summary="Retrain the classifier with the analysts' labels (a new local model version; redeploy to Foundry to serve it there)")
+async def retrain():
+    global MODEL, CARD
+    if not LIVE.labels:
+        raise HTTPException(409, "No analyst labels yet: confirm or reject an account, or dismantle a ring")
+    ids = list(LIVE.labels)
+    rows, y = ai_rows(ids), [int(LIVE.labels[a]) for a in ids]
+    MODEL, CARD = await asyncio.to_thread(xai.train, extra=(rows, y), version=CARD.get("version", 1) + 1, save=False)
+    LIVE.version += 1
+    return {"version": CARD["version"], "analyst_labels": len(ids), "holdout": CARD["holdout"],
+            "note": "Serving locally. Run foundry/deploy.py to serve this version from Microsoft Foundry." if os.environ.get("FOUNDRY_SCORING_URL") else None}

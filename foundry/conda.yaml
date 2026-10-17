@@ -1,0 +1,9 @@
+name: mule-xai
+channels: [conda-forge]
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - azureml-inference-server-http
+      - lightgbm==4.7.0
+      - numpy

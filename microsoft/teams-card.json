@@ -1,0 +1,24 @@
+{
+  "type": "AdaptiveCard",
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "version": "1.4",
+  "body": [
+    { "type": "TextBlock", "text": "MULETRACE · RING DISMANTLED", "weight": "Bolder", "color": "Attention", "size": "Small" },
+    { "type": "TextBlock", "text": "@{triggerBody()?['case_id']} · @{triggerBody()?['network_id']}", "size": "ExtraLarge", "weight": "Bolder", "spacing": "None" },
+    { "type": "TextBlock", "text": "@{triggerBody()?['summary']}", "wrap": true },
+    {
+      "type": "FactSet",
+      "facts": [
+        { "title": "Money in", "value": "₹@{formatNumber(triggerBody()?['total_in'], 'N0', 'en-IN')}" },
+        { "title": "Risk score", "value": "@{triggerBody()?['score']}" },
+        { "title": "Alerts", "value": "@{join(triggerBody()?['alert_ids'], ', ')}" },
+        { "title": "Locked", "value": "@{join(triggerBody()?['frozen'], ', ')}" },
+        { "title": "Review first", "value": "@{join(triggerBody()?['review'], ', ')}" }
+      ]
+    },
+    { "type": "TextBlock", "text": "Source accounts may be fraud victims: review them before any action. STR draft is attached to the email; Principal Officer sign-off needed before filing with FIU-IND.", "wrap": true, "isSubtle": true, "size": "Small" }
+  ],
+  "actions": [
+    { "type": "Action.OpenUrl", "title": "Open in MuleTrace", "url": "@{variables('dashboardUrl')}/?ring=@{triggerBody()?['network_id']}" }
+  ]
+}

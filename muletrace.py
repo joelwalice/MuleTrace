@@ -134,63 +134,103 @@ def index(txns):
     return inc, out, devs
 
 
-def detect(accounts, inc, out, devs, band=(45000, 50000), min_pass=50000, min_dormant=100000):
-    """Defaults are INR (structuring under the ₹50,000 PAN threshold); eval_ibm.py passes USD values."""
-    alerts = []
-    for aid, acc in accounts.items():
-        I, O, hits = inc[aid], out[aid], []  # hits: (pattern, trigger txn, reason)
+RULES = ("structuring", "passthrough", "fan_in_out", "dormant", "shared_device")
 
-        s = [t for t in I if band[0] <= t["amount"] < band[1]]
+
+def detect(accounts, inc, out, devs, band=(45000, 50000), min_pass=50000, min_dormant=100000,
+           rules=RULES, ratio=0.8, fan=5, dormant_days=90):
+    """Defaults are INR (structuring under the ₹50,000 PAN threshold); eval_ibm.py passes USD values.
+    Each alert carries `evidence`: per rule, the transaction ids it fired on and the numbers it computed,
+    so the explanation a Copilot gives can never drift from what the rule actually saw."""
+    alerts = []
+    ids = lambda ts: [t["txn_id"] for t in ts]
+    for aid, acc in accounts.items():
+        I, O, hits = inc[aid], out[aid], []  # hits: (pattern, trigger txn, reason, evidence)
+
+        s = [t for t in I if band[0] <= t["amount"] < band[1]] if "structuring" in rules else []
         for i, t in enumerate(s):
-            n = bisect_right(s, t["ts"] + H24, key=TS) - i
-            if n >= 3:
-                hits.append(("structuring", t, f"{n} deposits of {inr(band[0])}-{inr(band[1] - 1)} within 24h, "
-                                               f"just under the reporting threshold"))
+            j = bisect_right(s, t["ts"] + H24, key=TS)
+            if j - i >= 3:
+                dep = s[i:j]
+                hits.append(("structuring", t, f"{j - i} deposits of {inr(band[0])}-{inr(band[1] - 1)} within 24h, "
+                                               f"just under the reporting threshold",
+                             [comp("deposits_in_band_24h", j - i, f"count of deposits {inr(band[0])}-{inr(band[1] - 1)} "
+                                   "within 24h of the first", ids(dep)),
+                              comp("total_deposited", round(sum(u["amount"] for u in dep), 2), "sum of those deposits", ids(dep))]))
                 break
 
-        for t in I:
+        for t in I if "passthrough" in rules else []:
             if t["amount"] < min_pass:
                 continue
-            fwd = sum(u["amount"] for u in window(O, t["ts"], t["ts"] + M30))
-            if fwd >= 0.8 * t["amount"]:
-                hits.append(("passthrough", t, f"Received {inr(t['amount'])} and sent {inr(fwd)} onward within 30 min"))
+            nxt = window(O, t["ts"], t["ts"] + M30)
+            fwd = sum(u["amount"] for u in nxt)
+            if fwd >= ratio * t["amount"]:
+                hits.append(("passthrough", t, f"Received {inr(t['amount'])} and sent {inr(fwd)} onward within 30 min",
+                             [comp("passthrough_ratio", round(fwd / t["amount"], 2), "sent within 30 min / received",
+                                   ids([t] + nxt)),
+                              comp("minutes_to_forward", round((nxt[0]["ts"] - t["ts"]).total_seconds() / 60, 1),
+                                   "first onward transfer minus arrival", ids([t, nxt[0]]))]))
                 break
 
-        for t in I:
-            ss = {u["sender_account"] for u in window(I, t["ts"], t["ts"] + H1)}
-            if len(ss) <= 5:
+        for t in I if "fan_in_out" in rules else []:
+            win_in = window(I, t["ts"], t["ts"] + H1)
+            ss = {u["sender_account"] for u in win_in}
+            if len(ss) <= fan:
                 continue
-            rr = {u["receiver_account"] for u in window(O, t["ts"], t["ts"] + H1)}
-            if len(rr) > 5:
-                hits.append(("fan_in_out", t, f"{len(ss)} senders and {len(rr)} receivers within 1h"))
+            win_out = window(O, t["ts"], t["ts"] + H1)
+            rr = {u["receiver_account"] for u in win_out}
+            if len(rr) > fan:
+                hits.append(("fan_in_out", t, f"{len(ss)} senders and {len(rr)} receivers within 1h",
+                             [comp("unique_senders_1h", len(ss), "distinct senders within 1h", ids(win_in)),
+                              comp("unique_receivers_1h", len(rr), "distinct receivers within the same 1h", ids(win_out))]))
                 break
 
         prev = datetime.fromisoformat(acc["open_date"])
-        for t in sorted(I + O, key=TS):
-            if t["ts"] - prev >= timedelta(days=90) and t["amount"] >= min_dormant:
-                hits.append(("dormant", t, f"Dormant {(t['ts'] - prev).days} days, then {inr(t['amount'])}"))
+        for t in sorted(I + O, key=TS) if "dormant" in rules else []:
+            if t["ts"] - prev >= timedelta(days=dormant_days) and t["amount"] >= min_dormant:
+                hits.append(("dormant", t, f"Dormant {(t['ts'] - prev).days} days, then {inr(t['amount'])}",
+                             [comp("days_dormant", (t["ts"] - prev).days, "days since the previous activity (or opening)",
+                                   ids([t]))]))
                 break
             prev = t["ts"]
 
-        shared = {a for d in {t["device_id"] for t in O} for a in devs[d]} - {aid}
+        dv = sorted({t["device_id"] for t in O})
+        shared = sorted({a for d in dv for a in devs[d]} - {aid}) if "shared_device" in rules else []
         if len(shared) >= 2:
-            hits.append(("shared_device", O[0], f"Device shared with {len(shared)} other accounts"))
+            hits.append(("shared_device", O[0], f"Device shared with {len(shared)} other accounts",
+                         [comp("accounts_on_same_device", len(shared), "other accounts sending from this account's devices",
+                               [d for d in dv if len(devs[d]) > 1] + shared)]))
 
         if not hits:
             continue
         miss = 1.0
-        for p, _, _ in hits:
-            miss *= 1 - PATTERN_BASE[p]
+        for h in hits:
+            miss *= 1 - PATTERN_BASE[h[0]]
         score = round(min(0.99, 1 - miss + 0.2 * acc["kyc_risk"]), 2)
         trigger = min((h[1] for h in hits), key=TS)
         alerts.append(dict(account_id=aid, txn_id=trigger["txn_id"], ts=trigger["ts"], score=score,
                            severity=severity(score), pattern="+".join(h[0] for h in hits),
                            reasons=[h[2] for h in hits], amount=trigger["amount"], status="new",
-                           assigned_to="", created_at=NOW))
+                           assigned_to="", created_at=NOW,
+                           evidence=[dict(pattern=h[0], reason=h[2], trigger=h[1]["txn_id"], computations=h[3]) for h in hits]))
     alerts.sort(key=lambda a: -a["score"])
     for i, a in enumerate(alerts):
         a["alert_id"] = f"AL-{101 + i}"
     return alerts
+
+
+def comp(name, value, formula, inputs):
+    return dict(name=name, value=value, formula=formula, inputs=inputs)
+
+
+def confidence(alert, trail_edges):
+    """How far the evidence supports the alert. 'insufficient' = don't conclude, list the gaps instead."""
+    strong = set(alert["pattern"].split("+")) - {"shared_device"}
+    if not strong or trail_edges < 2:
+        return "insufficient"
+    if len(strong) >= 2 or alert["score"] >= 0.85:
+        return "high"
+    return "medium" if alert["score"] >= 0.7 else "low"
 
 
 def severity(score):
@@ -290,17 +330,26 @@ def profile(aid, accounts, inc, out):
                 txns=sorted(I + O, key=TS, reverse=True)[:50])
 
 
+def tables(accounts, txns, alerts, nets):
+    """Flat rows for Power BI: (name, rows)."""
+    return [("accounts", list(accounts.values())), ("transactions", txns),
+            ("alerts", [{**{k: v for k, v in a.items() if k != "evidence"}, "reasons": "; ".join(a["reasons"])} for a in alerts]),
+            ("networks", [{k: "; ".join(map(str, v)) if isinstance(v, list) else v for k, v in n.items()
+                           if k not in ("edges", "devices")} for n in nets])]
+
+
+def write_csv(f, rows):
+    w = csv.DictWriter(f, fieldnames=list(rows[0]) if rows else ["empty"], extrasaction="ignore")
+    w.writeheader()
+    w.writerows(rows)
+
+
 def export(path, accounts, txns, alerts, nets):
     """CSV dump for Power BI."""
     path.mkdir(exist_ok=True)
-    for name, rows in [("accounts", list(accounts.values())), ("transactions", txns),
-                       ("alerts", [{**a, "reasons": "; ".join(a["reasons"])} for a in alerts]),
-                       ("networks", [{k: "; ".join(map(str, v)) if isinstance(v, list) else v for k, v in n.items()
-                                      if k not in ("edges", "devices")} for n in nets])]:
+    for name, rows in tables(accounts, txns, alerts, nets):
         with open(path / f"{name}.csv", "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=list(rows[0]))
-            w.writeheader()
-            w.writerows(rows)
+            write_csv(f, rows)
 
 
 ACCOUNTS, TXNS = generate()
@@ -326,6 +375,19 @@ if __name__ == "__main__":
         plan = live.ring(kind, NOW)
         assert plan and plan == sorted(plan, key=TS) and all(t["ts"] >= NOW for t in plan), kind
     assert all(not any(map(is_ring, n["accounts"])) for n in NETWORKS if n not in ring_nets)
+    by_id = {t["txn_id"]: t for t in TXNS}
+    for a in ALERTS:  # every cited transaction exists, and each ratio recomputes from its own inputs
+        for ev in a["evidence"]:
+            for c in ev["computations"]:
+                assert all(i in by_id or i in DEVS or i in ACCOUNTS for i in c["inputs"]), c
+                if c["name"] == "passthrough_ratio":
+                    first, *rest = (by_id[i] for i in c["inputs"])
+                    assert round(sum(t["amount"] for t in rest) / first["amount"], 2) == c["value"], c
+    assert confidence(dict(pattern="shared_device", score=0.9), 5) == "insufficient"
+    assert confidence(dict(pattern="passthrough+dormant", score=0.5), 3) == "high"
+    no_struct = detect(ACCOUNTS, INC, OUT, DEVS, rules=set(RULES) - {"structuring"})
+    assert len(no_struct) < len(ALERTS) and not any("structuring" in a["pattern"] for a in no_struct)
+    assert len(detect(ACCOUNTS, INC, OUT, DEVS, ratio=0.8)) == len(ALERTS)  # explicit defaults change nothing
     for n in NETWORKS:
         print(n["network_id"], n["severity"], len(n["alert_ids"]), "alerts", len(n["accounts"]), "accounts",
               inr(n["total_in"]), n["patterns"], "sources:", n["sources"])

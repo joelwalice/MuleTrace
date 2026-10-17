@@ -1,6 +1,6 @@
 # MuleTrace: Investigation Copilot Plan
 
-Status: **P0–P2 built, 17 Oct 2026.** CSV upload was cut, because `/ingest` already covers incoming data. The IBM run is done (`context.md` item 16). Still waiting on sign-ins: the Copilot Studio agent, Power Automate, and the Foundry endpoint. **What's left is in [`TODO.md`](TODO.md).**
+Status: **P0–P2 built, 17 Oct 2026.** CSV upload was cut, because `/ingest` already covers incoming data. The IBM run is done (`context.md` item 16). **18 Oct:** the Copilot Studio agent and the Power Automate playbook are live (`context.md` item 17). The connector below became an MCP tool on `/mcp`, because the current Copilot Studio has no REST API tool, and the lab playbook emails the STR because the lab user has no Teams. The Foundry endpoint is still optional. **What's left is in [`TODO.md`](TODO.md).**
 
 See `microsoft/README.md`. Demo day is 18 Oct.
 Sources: the two DeepSeek threads (the "which idea wins" verdict and the "go" build pack), checked against this repo.

@@ -11,6 +11,7 @@ import os
 import random
 import time
 import urllib.request
+from urllib.parse import quote, urlencode
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -23,7 +24,7 @@ from statistics import median
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 import muletrace as mt
@@ -201,6 +202,11 @@ def lookup(table, key, what):
 
 PATTERN = {"structuring": "structuring", "passthrough": "rapid pass-through", "fan_in_out": "fan-in/fan-out",
            "dormant": "dormant account wake-up", "shared_device": "shared device"}
+GROUNDS = {"structuring": "repeated cash deposits just under the ₹50,000 PAN threshold",
+           "passthrough": "rapid pass-through with funds forwarded within minutes",
+           "fan_in_out": "many senders funnelled through a hub to many receivers",
+           "dormant": "a dormant account suddenly moving large sums",
+           "shared_device": "several accounts operated from the same device"}
 
 
 def pats(ps):
@@ -396,8 +402,8 @@ def network(network_id: str):
                  f"Source accounts (possible victims or organisers, review before action): {names(n['sources'])}.\n"
                  f"Mule accounts: {names(mules)}.\nExit accounts: {names(n['exits'])}.\n"
                  f"Shared devices: {by_device(n['devices'])}.\n\n"
-                 f"Grounds for suspicion: Rapid pass-through, sub-threshold deposits and shared devices across accounts "
-                 f"with no apparent economic purpose indicate layering of proceeds of crime.\n"
+                 f"Grounds for suspicion: {'; '.join(GROUNDS[p] for p in n['patterns'])}, across linked accounts "
+                 f"with no apparent economic purpose, indicating layering of proceeds of crime.\n"
                  f"Action: freeze mule and exit accounts, review sources, file STR within 7 working days, notify LEA if fraud victims identified.")
     return LIVE.net_view(n) | {"explanation": explanation, "str_draft": str_draft, "mules": mules,
                                "checklist": checklist(n["alerted"], [e["txn_id"] for e in n["edges"]], bool(n["edges"]),
@@ -686,6 +692,84 @@ def copilot_spec(request: Request):
                        routes=[r for r in app.routes if getattr(r, "operation_id", None) in COPILOT_TOOLS])
     spec["servers"] = [{"url": os.environ.get("PUBLIC_URL") or str(request.base_url).rstrip("/")}]
     return spec
+
+
+# The same tools over MCP (streamable HTTP, stateless JSON responses), for Copilot Studio's Add tool → MCP.
+# Each call is forwarded in-process to the REST route, so both paths return identical answers.
+MCP_TOOLS = {}
+
+
+def mcp_tools():
+    if not MCP_TOOLS:
+        spec = get_openapi(title="MuleTrace", version="1.0.0", routes=[r for r in app.routes if getattr(r, "operation_id", None) in COPILOT_TOOLS])
+        schemas = spec.get("components", {}).get("schemas", {})
+        for path, ops in spec["paths"].items():
+            for method, op in ops.items():
+                props, req = {}, []
+                for p in op.get("parameters", []):
+                    props[p["name"]] = {k: v for k, v in p["schema"].items() if k != "title"} | ({"description": p["description"]} if p.get("description") else {})
+                    req += [p["name"]] if p.get("required") else []
+                body = op.get("requestBody", {}).get("content", {}).get("application/json", {}).get("schema")
+                if body:
+                    body = schemas[body["$ref"].split("/")[-1]] if "$ref" in body else body
+                    props |= body.get("properties", {})
+                    req += body.get("required", [])
+                MCP_TOOLS[op["operationId"]] = dict(method=method.upper(), path=path, params=op.get("parameters", []), body=bool(body), spec=dict(
+                    name=op["operationId"], description=" ".join(filter(None, [op.get("summary"), op.get("description")])),
+                    inputSchema=dict(type="object", properties=props, required=req),
+                    annotations=dict(readOnlyHint=method == "get", destructiveHint=op["operationId"] == "dismantleRing")))
+    return MCP_TOOLS
+
+
+async def asgi_call(method, path, query, body):
+    raw, out, sent = json.dumps(body).encode() if body is not None else b"", dict(status=500, body=b""), False
+    scope = dict(type="http", asgi={"version": "3.0"}, http_version="1.1", method=method, scheme="http", path=path,
+                 raw_path=path.encode(), root_path="", query_string=urlencode(query).encode(), client=("127.0.0.1", 0),
+                 server=("mcp.local", 80), headers=[(b"host", b"mcp.local"), (b"content-type", b"application/json")])
+
+    async def receive():
+        nonlocal sent
+        if sent:
+            return {"type": "http.disconnect"}
+        sent = True
+        return {"type": "http.request", "body": raw, "more_body": False}
+
+    async def send(m):
+        if m["type"] == "http.response.start":
+            out["status"] = m["status"]
+        elif m["type"] == "http.response.body":
+            out["body"] += m.get("body", b"")
+    await app(scope, receive, send)
+    return out["status"], out["body"].decode()
+
+
+@app.post("/mcp", include_in_schema=False)
+async def mcp(request: Request):
+    msg = await request.json()
+    method, mid, params = msg.get("method"), msg.get("id"), msg.get("params") or {}
+    if mid is None:
+        return Response(status_code=202)  # notification, e.g. notifications/initialized
+    if method == "initialize":
+        result = dict(protocolVersion=params.get("protocolVersion", "2025-03-26"), capabilities={"tools": {}},
+                      serverInfo={"name": "MuleTrace Investigator", "version": "1.0.0"})
+    elif method == "ping":
+        result = {}
+    elif method == "tools/list":
+        result = {"tools": [t["spec"] for t in mcp_tools().values()]}
+    elif method == "tools/call" and params.get("name") in mcp_tools():
+        t, args = mcp_tools()[params["name"]], params.get("arguments") or {}
+        path, query, names = t["path"], {}, {p["name"] for p in t["params"]}
+        for p in t["params"]:
+            if args.get(p["name"]) is not None:
+                if p["in"] == "path":
+                    path = path.replace("{%s}" % p["name"], quote(str(args[p["name"]]), safe=""))
+                else:
+                    query[p["name"]] = args[p["name"]]
+        status, text = await asgi_call(t["method"], path, query, {k: v for k, v in args.items() if k not in names} if t["body"] else None)
+        result = {"content": [{"type": "text", "text": text}], "isError": status >= 400}
+    else:
+        return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"Unknown method or tool: {method} {params.get('name', '')}".strip()}}
+    return {"jsonrpc": "2.0", "id": mid, "result": result}
 
 
 # -- Explainable classifier (xai.py), served locally or from a Microsoft Foundry managed online endpoint ----------

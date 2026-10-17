@@ -5,3 +5,7 @@ __pycache__/
 # IBM AML download (454 MB): fetch with the README's kagglehub command
 data/ibm/
 .next-test/
+# Demo secrets (demo-mac.sh)
+.demo.env
+.devtunnel.log
+copilot-openapi.json

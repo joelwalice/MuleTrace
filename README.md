@@ -24,13 +24,15 @@ cd web; npm install; npm run dev                                               #
 ```
 `PYTHONUTF8=1` keeps the ₹ sign from crashing Python's console output.
 
-### Judge phones
+### Judge phones (demo day)
 ```
-powershell -ExecutionPolicy Bypass -File demo-lan.ps1      # add -Ip <address> to pick one, -SkipBuild to reuse the build
+./demo-mac.sh                                              # macOS: add -i <address> to pick one, --skip-build to reuse the build
+powershell -ExecutionPolicy Bypass -File demo-lan.ps1      # Windows: add -Ip <address>, -SkipBuild
 ```
 It finds the laptop's Wi-Fi address, bakes it into the dashboard (`NEXT_PUBLIC_API`), allows it in `CORS_ORIGINS`, builds, and serves both on all interfaces. Then phones open `http://<laptop-ip>:3000/send`, and **More → Judge Phone QR Code** shows that address.
+- **`demo-mac.sh` also starts the Microsoft side.** It reads the git-ignored `.demo.env` (`PUBLIC_URL`, `PLAYBOOK_WEBHOOK`, `TUNNEL`, optional `FOUNDRY_*`), hosts the persistent dev tunnel and passes the webhook to the API. The Copilot embed URL comes from `web/.env.local` at build time. Ctrl+C stops everything.
 - Phones must be on the same Wi-Fi. Venue Wi-Fi often isolates clients, so the laptop's own hotspot is the safer plan.
-- On first run Windows asks to let Python and Node through the firewall: allow **Private** networks.
+- On first run the OS asks to let Python and Node accept connections: allow them (on Windows, **Private** networks).
 - It uses the production build on purpose. `npm run dev` blocks its own scripts for hosts other than localhost, so `/send` on a phone would load but never respond.
 
 | Setting | Where | Default | What it does |
@@ -39,8 +41,8 @@ It finds the laptop's Wi-Fi address, bakes it into the dashboard (`NEXT_PUBLIC_A
 | `CORS_ORIGINS` | API | `http://localhost:3000` | Origins allowed to call the API |
 | `NEXT_PUBLIC_API` | web, build time | `http://localhost:8000` | Where the dashboard finds the API |
 | `FOUNDRY_SCORING_URL`, `FOUNDRY_KEY` | API | unset | Score through the Microsoft Foundry endpoint (see `foundry/README.md`). Unset: the local copy of the model |
-| `PUBLIC_URL` | API | request host | Public HTTPS URL (Dev Tunnel / Azure), written into `/copilot/openapi.json` |
-| `NEXT_PUBLIC_COPILOT_URL` | web, build time | unset | Copilot Studio web-chat URL. Shows **Ask Copilot** in the header |
+| `PUBLIC_URL` | API | request host | Public HTTPS URL (Dev Tunnel / Azure). Copilot Studio connects to `<PUBLIC_URL>/mcp`; also written into `/copilot/openapi.json` |
+| `NEXT_PUBLIC_COPILOT_URL` | web, build time (`web/.env.local`) | unset | Copilot Studio web-chat URL (Demo website → Embed). Shows **Ask Copilot** in the header |
 
 - **Live feed:** the API starts a synthetic bank with 30 days of ordinary customer history. A **bank clock** then keeps running (30× real time by default; 1× is true real time) while ordinary transactions stream in at about 2 per second, with no end. Detection reruns on every tick.
 - **Mule attacks:** each attack creates fresh accounts and plays out on the bank clock over the next 1–3 real minutes:
@@ -102,7 +104,7 @@ It finds the laptop's Wi-Fi address, bakes it into the dashboard (`NEXT_PUBLIC_A
    - **Ask Copilot:** "Why is AL-10x suspicious?" The answer cites `[TX…]`.
    - "Draft the STR": the checklist shows what's still missing.
    - **Policy:** turn off Structuring → Replay → "a ring would be missed" → Defaults.
-8. **Dismantle Ring → Lock N Accounts.** Sources go to review, and Teams and Planner fire. Then **File STR** (acknowledgement number) → **Close**. **Cases** shows the audit trail.
+8. **Dismantle Ring → Lock N Accounts** (use the fan-in/fan-out ring: 10 locked, 8 to review). Sources go to review, and the Power Automate playbook emails the case and STR draft (Log: `sent (202)`). Or ask the Copilot to "Dismantle NET-x": it asks "Confirm…?" and acts only on a yes. Then **File STR** (acknowledgement number) → **Close**. **Cases** shows the audit trail.
 9. **Human in the loop:** on an account the AI over-scores, press **Not a Mule**, then **Cases → Retrain Model v1 → v2**. The score updates, and the panel says "LightGBM v2".
 10. **Credibility:** IBM AML results (below): the classifier retrained on IBM history gets 7.7× lift where the rules get 1.7×. Then the model card (`GET /ai/model`).
 
@@ -168,7 +170,7 @@ curl -X POST localhost:8000/ingest -H 'content-type: application/json' \
 
 - **Microsoft Foundry (explainable AI):** `foundry/deploy.py` deploys the classifier as a managed online endpoint in your Foundry project. The API then scores through it, falling back to the local model if it's unreachable. See [`foundry/README.md`](foundry/README.md).
 
-- **Copilot Studio:** **Tools → Add a tool → REST API**, then upload `/copilot/openapi.json` (14 tools such as `explainAlert`, `traceRingMoney`, `compareAccounts`, `draftRingStr`, `replayPolicy` and `dismantleRing`). Paste `microsoft/agent-instructions.md` as the instructions. Full steps, including Dev Tunnels for a public URL and the Teams channel, are in [`microsoft/README.md`](microsoft/README.md).
+- **Copilot Studio:** **Tools → + → Add → Model Context Protocol (MCP)** with server URL `<PUBLIC_URL>/mcp` and no authentication. That adds 17 tools such as `explainAlert`, `traceRingMoney`, `compareAccounts`, `draftRingStr`, `replayPolicy`, `explainAccountRisk` and `dismantleRing`; `/mcp` forwards each call to the REST route. Older Copilot Studio layouts can upload `/copilot/openapi.json` as a REST API tool instead. Paste `microsoft/agent-instructions.md` as the instructions. Full steps, including Dev Tunnels, the Dataverse fix for lab tenants and the dashboard embed, are in [`microsoft/README.md`](microsoft/README.md).
 - **Power BI:** use **Get data → Web** on `/export/alerts.csv` (and `networks`, `transactions`, `accounts`) for live data, or `data/*.csv` for the fixed demo dataset.
 - **Azure:**
   - API on App Service: startup command `uvicorn app:app --host 0.0.0.0`, and set `CORS_ORIGINS` to the web URL.
@@ -191,16 +193,25 @@ curl -X POST localhost:8000/ingest -H 'content-type: application/json' \
        "required": ["case_id", "network_id", "frozen", "review", "summary"]
      }
      ```
-  3. Add the actions. Use the Expression tab for anything in `@{…}`.
-     - **Teams** card: use **Post card in a chat or channel** with `microsoft/teams-card.json`, or a plain post:
+  3. Add the actions. Paste `@{…}` text and the designer turns it into tokens.
+     - **Outlook** (what the demo uses): **Send an email (V2)**. Subject `STR due in 7 days: ring @{triggerBody()?['network_id']} (@{triggerBody()?['case_id']})`. For the body, empty the field, switch to HTML with **`</>`** *first*, then paste (pasted in normal view, the tags arrive as literal text):
+       ```html
+       <p><b>@{triggerBody()?['case_id']}</b>: mule ring <b>@{triggerBody()?['network_id']}</b> dismantled by MuleTrace.</p>
+       <p>@{triggerBody()?['summary']}</p>
+       <p><b>Frozen (simulated):</b> @{join(triggerBody()?['frozen'], ', ')}<br>
+       <b>Sent to review, not frozen (may be victims):</b> @{join(triggerBody()?['review'], ', ')}<br>
+       <b>Alerts:</b> @{join(triggerBody()?['alert_ids'], ', ')}</p>
+       <p><b>Action:</b> file the STR with FIU-IND within 7 days of establishing suspicion. The draft below needs Principal Officer review.</p>
+       <pre style="white-space:pre-wrap;font-family:Consolas,monospace;background:#f4f4f4;padding:12px">@{triggerBody()?['str_draft']}</pre>
+       ```
+     - **Teams** (if the tenant has it): **Post card in a chat or channel** with `microsoft/teams-card.json`, or a plain post:
        ```
        @{triggerBody()?['case_id']}: ring @{triggerBody()?['network_id']} dismantled
        @{triggerBody()?['summary']}
        Frozen: @{join(triggerBody()?['frozen'], ', ')}
        Review first: @{join(triggerBody()?['review'], ', ')}
        ```
-     - **Planner** task due `@{addDays(utcNow(), 7)}`.
-     - **Outlook** email with body `@{triggerBody()?['str_draft']}`.
+     - **Planner** task due `@{addDays(utcNow(), 7)}` (needs a Team with a plan).
   4. Save, copy the trigger URL, and restart the API. Keep the single quotes, because the URL contains `&`:
      ```
      PLAYBOOK_WEBHOOK='https://…' .venv/bin/uvicorn app:app --reload

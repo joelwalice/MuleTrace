@@ -84,6 +84,10 @@ export type Evaluation = { status: "not run"; how: string } | {
   status: "ok"; dataset: string; rows_read: number | "all"; precision: number; recall: number; lift: number; base_rate: number;
   alerts: number; caught: number; laundering_accounts: number; accounts: number; transactions: number;
   attempts?: number; attempts_caught?: number; attempt_recall?: number; run_on: string;
+  ai?: { /* eval_ibm.py --ai: classifier trained on IBM's earlier days, tested on the later ones */
+    train_days: string; test_days: string; test_accounts: number; test_laundering: number; auc: number; auc_synthetic_model: number | null;
+    alert_budget: number; caught_rules: number; caught_ai: number; precision_rules: number; precision_ai: number; lift_rules: number; lift_ai: number;
+  };
 };
 export type Profile = {
   account_id: string; name: string; type: string; open_date: string; home_branch: string; kyc_risk: number;

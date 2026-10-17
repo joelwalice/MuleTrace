@@ -1,0 +1,7 @@
+.venv/
+.venv-azure/
+__pycache__/
+*.pyc
+# IBM AML download (454 MB): fetch with the README's kagglehub command
+data/ibm/
+.next-test/

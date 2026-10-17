@@ -460,14 +460,22 @@ function Stage({ label, value, note, arrow, hot }: { label: string; value: numbe
   );
 }
 
-/* The accuracy card appears only what eval_ibm.py measured on IBM's public data, never a placeholder figure. */
+/* The accuracy card appears only what eval_ibm.py measured on IBM's public data, never a placeholder figure.
+   With --ai it leads with the classifier retrained on IBM history, next to the rules at the same alert budget. */
 function Bench({ e }: { e: Extract<Evaluation, { status: "ok" }> }) {
+  const a = e.ai;
+  const about = `${e.dataset} · ${e.rows_read === "all" ? "all" : num(e.rows_read)} rows · USD only, no device data · run ${e.run_on}`;
   return (
     <div className="min-w-[190px] bg-panel px-4 py-3"
-      title={`${e.dataset} · ${e.rows_read === "all" ? "all" : num(e.rows_read)} rows · USD only, no device data · run ${e.run_on}`}>
+      title={a ? `${about}\nAI trained ${a.train_days}, tested ${a.test_days} (${num(a.test_accounts)} accounts, ${num(a.test_laundering)} laundering)\n`
+        + `Top ${num(a.alert_budget)} alerts: AI caught ${a.caught_ai}, rules ${a.caught_rules} · AUC ${a.auc}`
+        + (a.auc_synthetic_model != null ? ` (synthetic-only model ${a.auc_synthetic_model})` : "") : about}>
       <div className="tl text-muted">Accuracy · IBM Data</div>
-      <output className="macro mt-1.5 block text-[clamp(2.25rem,3.4vw,3.25rem)] text-ink">{e.lift}<span className="text-[0.6em]">×</span></output>
-      <p className="mt-1.5 truncate font-sans text-[13px] text-ink-2">Better than chance · precision {e.precision.toFixed(2)}, recall {e.recall.toFixed(2)}</p>
+      <output className="macro mt-1.5 block text-[clamp(2.25rem,3.4vw,3.25rem)] text-ink">{a ? a.lift_ai : e.lift}<span className="text-[0.6em]">×</span></output>
+      <p className="mt-1.5 truncate font-sans text-[13px] text-ink-2">
+        {a ? `Better than chance · AI retrained on IBM history · rules alone ${a.lift_rules}×`
+          : `Better than chance · precision ${e.precision.toFixed(2)}, recall ${e.recall.toFixed(2)}`}
+      </p>
     </div>
   );
 }

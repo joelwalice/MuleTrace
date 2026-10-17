@@ -122,7 +122,8 @@ def load(path=MODEL_DIR):
     if not f.exists():
         return None, None
     card = Path(path) / "card.json"
-    return lgb.Booster(model_file=str(f)), json.loads(card.read_text()) if card.exists() else {}
+    # model_str, not model_file: a CRLF copy of the file (Windows checkout) is otherwise a "Model format error"
+    return lgb.Booster(model_str=f.read_text().replace("\r", "")), json.loads(card.read_text()) if card.exists() else {}
 
 
 # -- training (needs muletrace; not used by the scoring endpoint) -----------------------------------------------

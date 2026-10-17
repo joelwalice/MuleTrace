@@ -224,6 +224,18 @@ cd web && node flow.check.mjs               # graph layout self-check
      - **More → Judge Phone QR Code:** a `qrcode` npm package rendering an SVG locally; it warns on localhost.
    - **Self-check:** an analyst "not a mule" on the top-scoring account yields v2, which scores it lower.
 
+16. **IBM benchmark run, Windows fixes, judge phones over LAN** (17 Oct, evening).
+   - **IBM AML HI-Small** downloaded with `kagglehub` (no token needed) into `data/ibm/` (git-ignored). First 2.5M rows: 732k USD transactions, 153k accounts, 1,236 laundering.
+     - **Rules:** 0.9× lift, 12 of 260 attempts touched. They're tuned to the demo's attacks: IBM laundering waits a median 9.5 h before forwarding and has a median of 2 senders / 1 receiver, so 30-minute pass-through and >5 fan rarely fire.
+     - **`eval_ibm.py --ai`:** trains the classifier on the earliest 65% of transactions, tests on the rest (features and labels from disjoint windows, no KYC/device/opening dates). AUC 0.68 (synthetic-only model: 0.60). At the rules' alert budget (118): AI caught 9, rules 2, so **7.7× vs 1.7× lift**. Small sample; say so.
+     - The split is by transaction count, not time span: IBM's last days hold a sparse tail of almost only laundering rows.
+   - **Accuracy card:** leads with the classifier's IBM lift when `eval.json` has an `ai` block, with "rules alone 1.7×" beside it; the tooltip holds the counts.
+   - **Copilot instructions:** "How accurate is it?" now leads with the `ai` block and states the rules' weakness on IBM plainly.
+   - **Fixed: model unreadable on Windows.** Git's `core.autocrlf` checked `model/mule_classifier.txt` out with CRLF, which LightGBM rejects ("Model format error"), so every AI endpoint failed. `.gitattributes` now marks `model/*.txt -text`, and `xai.load()` strips `\r` anyway.
+   - **Judge phones:** `demo-lan.ps1` builds and serves the API and dashboard on the laptop's Wi-Fi address. Production build on purpose: the Next dev server blocks its scripts for non-localhost hosts.
+   - **Repo hygiene:** root `.gitignore` (`.venv/`, `__pycache__/`, `data/ibm/`, `.next-test/`); compiled `.pyc` files untracked.
+   - **Remaining work and sign-ins:** `TODO.md`.
+
 ## 6. Design rules currently in force (don't regress)
 
 - **Look:** a light analyst workspace (from the `minimalist-ui` skill), replacing the dark terminal look in item 12.
@@ -258,10 +270,10 @@ cd web && node flow.check.mjs               # graph layout self-check
 
 ## 8. Known issues and open items
 
-- **IBM AML numbers not run yet.** The Kaggle CLI is installed in `.venv` and needs `~/.kaggle/kaggle.json`. See the README's "Evaluation on public data" section; the result lands in `data/eval.json` and the dashboard card.
+- **IBM AML run done** (item 16). The rules alone barely beat chance on IBM; pitch the retrained classifier's 7.7× and be upfront about the rules.
 - **Foundry endpoint not deployed yet.** It needs an Azure subscription, `az login` and a hub-based Foundry project. See `foundry/README.md`.
 - **Copilot Studio agent not created yet.** It needs a public URL (Dev Tunnel) and the user's Microsoft sign-in. Follow `microsoft/README.md`.
-- **Facts to verify before the slides:** the PAN rule (Rule 114B, ₹50k cash) and the STR deadline (7 working days, PML Rules) were written from memory.
+- **Facts to verify before the slides:** the STR deadline checks out (7 days from the Principal Officer establishing suspicion; FIU-IND says working days, RBI says days). The **₹50k PAN rule may be out of date:** reports say the Income-tax Rules, 2026 (from 1 April 2026) replaced Rule 114B's daily test with an annual ₹10 lakh aggregate. Unconfirmed against the official notification; see `TODO.md`.
 - **Next dev server stale CSS or "Failed to load chunk":** run `rm -rf .next && npm run dev`. Agents must build with `NEXT_DIST_DIR=.next-test` so they never touch the dev server's `.next`.
 - **Leftover processes:** three uvicorn processes (ports 8765, 8770, 8771) were started inside the agent sandbox and can't be killed, not even with `sudo`. They're harmless and should go away after quitting Claude Code or rebooting.
 - **Not built:** CSV upload (cut, since `/ingest` covers incoming data), API-key auth, a database or auth (cases are lost on restart), an ML anomaly score, and an LLM call inside the app (Copilot Studio handles that).

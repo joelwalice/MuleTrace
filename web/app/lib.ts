@@ -30,7 +30,7 @@ export const ATTACKS: { kind: Attack["kind"]; label: string; key: string; hint: 
   { kind: "fan", label: "Fan-In / Fan-Out", key: "3", hint: "8 in → hub → 8 mules → ATM" },
 ];
 export type GNode = { id: string; name: string; risk: number; role: string; frozen: boolean };
-export type GEdge = { id: string; source: string; target: string; amount?: number; ts?: string; kind: "money" | "shared_device" };
+export type GEdge = { id: string; source: string; target: string; amount?: number; ts?: string; kind: "money" | "shared_device" | "suspected"; directed?: boolean; score?: number; status?: string; label?: string;  };
 export type Graph = { nodes: GNode[]; edges: GEdge[] };
 export type Detail = {
   severity: Sev; status: string; score: number; explanation: string; str_draft: string;

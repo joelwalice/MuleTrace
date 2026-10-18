@@ -222,3 +222,6 @@ cd web && npm run build       # type-check + production build
 - **Styles don't update, or "Failed to load chunk" in dev:** run `cd web && rm -rf .next && npm run dev`. For a production test build next to a running dev server, use `NEXT_DIST_DIR=.next-test npm run build`.
 - **"No signal from the API":** start the API, and check that `NEXT_PUBLIC_API` and `CORS_ORIGINS` match your ports.
 - **Copy the STR:** the STR dialog has **Copy** and **Save .txt**.
+
+## Gaps and inferences
+MuleTrace separates recorded transfers from inferences. It flags where the records begin (first-hop blind spot), searches for possible return-to-origin paths, and scores recency-weighted account closeness. Inferred relationships are dashed in the graph, carry their evidence and limits, and need an analyst's decision. See INFERENCE.md.

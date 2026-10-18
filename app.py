@@ -27,7 +27,9 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 import muletrace as mt
+import relations as rel
 import xai
+from inference_api import build_router
 from muletrace import inr
 
 TICK = 0.25          # real seconds per tick
@@ -66,6 +68,7 @@ class Live:
         self.queue, self.attacks, self.autopilot, self.next_auto = [], [], False, 0.0
         self.frozen, self.cases, self.net_status, self.alert_ids, self.net_ids = set(), [], {}, {}, {}
         self.labels = {}  # account id -> True (confirmed mule) / False (not a mule): analyst feedback for retraining
+        self.suspected = rel.SuspectedStore()  # inferred relationships; never part of self.txns
         self.recompute()
 
     @property
@@ -169,6 +172,7 @@ class Live:
 
 
 LIVE = Live()
+INFERENCE, add_suspected = build_router(LIVE)
 iso = lambda o: o.isoformat() if hasattr(o, "isoformat") else str(o)
 
 
@@ -191,6 +195,7 @@ app = FastAPI(title="MuleTrace", lifespan=lifespan,
               description="AML SOC: mule network detection with time-ordered money trails (INR, FIU-IND STR)")
 app.add_middleware(CORSMiddleware, allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(","),
                    allow_methods=["*"], allow_headers=["*"])
+app.include_router(INFERENCE)
 
 
 def lookup(table, key, what):
@@ -346,7 +351,7 @@ def alert_graph(alert_id: str):
     a = lookup(LIVE.alert_by, alert_id, "alert")
     edges, up, down, lateral = mt.trace(a["account_id"], a["ts"], LIVE.inc, LIVE.out, LIVE.devs)
     role = lambda i: "subject" if i == a["account_id"] else "upstream" if i in up else "downstream" if i in down else "lateral"
-    return graph(edges, mt.device_links({a["account_id"]} | lateral, LIVE.out, LIVE.devs), role)
+    return add_suspected(graph(edges, mt.device_links({a["account_id"]} | lateral, LIVE.out, LIVE.devs), role))
 
 
 @app.get("/alert/{alert_id}", operation_id="draftAlertStr", summary="Alert detail: plain-English explanation, STR draft for FIU-IND and its completeness checklist")
@@ -378,7 +383,7 @@ def alert(alert_id: str):
 def network_graph(network_id: str):
     n = lookup(LIVE.net_by, network_id, "network")
     role = lambda i: "subject" if i in n["alerted"] else "source" if i in n["sources"] else "member"
-    return graph(n["edges"], n["devices"], role)
+    return add_suspected(graph(n["edges"], n["devices"], role))
 
 
 @app.get("/network/{network_id}", operation_id="draftRingStr", summary="Ring summary: sources, mules, exits, STR draft for FIU-IND and its completeness checklist")
@@ -675,7 +680,8 @@ def export_csv(table: Literal["accounts", "transactions", "alerts", "networks"])
 
 COPILOT_TOOLS = {"explainAlert", "explainRing", "traceAlertMoney", "traceRingMoney", "compareAccounts", "draftAlertStr",
                  "draftRingStr", "getAccount", "listAlerts", "listRings", "replayPolicy", "getPolicy", "getEvaluation", "dismantleRing",
-                 "explainAccountRisk", "getModelCard", "listCases"}
+                 "explainAccountRisk", "getModelCard", "listCases",
+                 "explainRingGaps", "traceReturnPaths", "scoreCloseness", "listSuspectedEdges", "getSuspectedEdge"}
 
 
 @app.get("/copilot/openapi.json", include_in_schema=False)

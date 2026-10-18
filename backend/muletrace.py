@@ -1,5 +1,5 @@
 """MuleTrace core: synthetic data with 3 hidden mule rings, detection rules, time-ordered money trail,
-ring grouping. Amounts in INR. Run `python muletrace.py` for the self-check."""
+ring grouping. Amounts in INR. Run `python3 backend/muletrace.py` for the self-check."""
 import csv
 import random
 from bisect import bisect_left, bisect_right

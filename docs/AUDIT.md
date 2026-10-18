@@ -1,22 +1,22 @@
 # MuleTrace vs "AI Apps That Matter": Audit, Gaps and Plan
 
-Written 18 Oct 2026 (demo day), for the MuleTrace team. Sources: `FSI_MeaningfulAI_FY26.pdf` (Microsoft partner guidance; page numbers below) and this repository at commit `4e39751` plus today's guardrail changes. Labels used throughout: **[PDF]** = stated in the PDF, **[PDF example]** = shown in an illustrative diagram, **[Rec]** = our recommendation, **[Assume]** = an assumption to confirm.
+Sources: `FSI_MeaningfulAI_FY26.pdf` (Microsoft partner guidance; page numbers below) and this repository, including the guardrail changes. Labels used throughout: **[PDF]** = stated in the PDF, **[PDF example]** = shown in an illustrative diagram, **[Rec]** = our recommendation, **[Assume]** = an assumption to confirm.
 
 ---
 
 ## 1. Executive verdict
 
-**Strong core, one real hole, now closed.** MuleTrace is not a generic dashboard or chatbot: it collapses per-account alerts into mule rings, traces money in time order, attaches transaction-cited evidence to every figure, separates possible victims from mules, drafts the STR and runs a case lifecycle. That covers the PDF's fraud process stages "real-time scoring & triage", "alert creation & routing", "investigation & evidence" and "decision compliance" (p.18) better than most hackathon entries will.
+**Strong core, one real hole, now closed.** MuleTrace is not a generic dashboard or chatbot: it collapses per-account alerts into mule rings, traces money in time order, attaches transaction-cited evidence to every figure, separates possible victims from mules, drafts the STR and runs a case lifecycle. That covers the PDF's fraud process stages "real-time scoring & triage", "alert creation & routing", "investigation & evidence" and "decision compliance" (p.18) end to end.
 
-**The hole a skeptical judge would have found:** before today, human approval of a freeze was enforced only by rule 6 in the Copilot prompt, and the anonymous dev tunnel exposed *every* API route to the internet: anyone with the URL could `POST /live/reset`, `/policy/apply` or `/network/{id}/dismantle`. The PDF's industry rule is "Human-in-the-loop by design; automate only low-risk, reversible steps; require explainability, audit trails, and approvals" (p.7). A prompt is not a control.
+**The hole:** previously, human approval of a freeze was enforced only by rule 6 in the Copilot prompt, and the anonymous dev tunnel exposed *every* API route to the internet: anyone with the URL could `POST /live/reset`, `/policy/apply` or `/network/{id}/dismantle`. The PDF's industry rule is "Human-in-the-loop by design; automate only low-risk, reversible steps; require explainability, audit trails, and approvals" (p.7). A prompt is not a control.
 
-**Fixed today (P0, tested: 31/31 checks in `check_guardrails.py`):**
+**Fixed (P0, tested: 32/32 checks in `check_guardrails.py`):**
 1. The agent has no consequential tool. `dismantleRing` left the MCP tool list; the agent gets `proposeDismantle`, which only creates a pending proposal. The console shows it, and only an analyst click executes it.
 2. Through the public URL only the 22 Copilot tools, `/mcp` and `/export/*` answer. Everything else returns 403 and is logged.
 3. A hash-chained audit trail records every agent tool call, proposal, approval, rejection, case action, policy change, retrain and blocked request.
 4. Optional API key for `/mcp`.
 
-**What still makes it lose if a judge pushes:** single role by design (approvals are recorded as "analyst (console)", not a named person), no persistence (restart loses cases and audit), one agent rather than the PDF's four (defensible, see §7), no policy-grounded regulatory Q&A, and the business-value numbers are alert reduction on data we planted.
+**What's still missing:** single role by design (approvals are recorded as "analyst (console)", not a named person), no persistence (restart loses cases and audit), one agent rather than the PDF's four (defensible, see §7), no policy-grounded regulatory Q&A, and the business-value numbers are alert reduction on data we planted.
 
 ---
 
@@ -24,25 +24,25 @@ Written 18 Oct 2026 (demo day), for the MuleTrace team. Sources: `FSI_Meaningful
 
 | # | Requirement / principle | PDF | Type | Purpose | Evidence in MuleTrace | Gap → remediation |
 |---|---|---|---|---|---|---|
-| R1 | Business impact: clear, measurable value on a real problem | p.3 | PDF | Judging pillar | 14 alerts → 3 rings; IBM benchmark (lift) | Value is alert reduction on synthetic data. Add an investigation-time measurement (§13) |
-| R2 | Innovative: agentic tech + real-time data, adaptive/predictive | p.3 | PDF | Judging pillar | Live bank feed + SSE; rules + LightGBM; Copilot over MCP; policy replay; analyst-label retraining | Agent is conversational + proposals; no autonomous multi-step flow. Acceptable for p.7's "augmentation-first" |
-| R3 | Enterprise-grade: governed, secure, trusted, stable, optimised | p.3 | PDF | Judging pillar | Today: action classes, server-side approval, public lockdown, audit chain, guardrail tests | No identity, no DB, in-memory audit. State plainly (§4) |
+| R1 | Business impact: clear, measurable value on a real problem | p.3 | PDF | Pillar | 14 alerts → 3 rings; IBM benchmark (lift) | Value is alert reduction on synthetic data. Add an investigation-time measurement (§12) |
+| R2 | Innovative: agentic tech + real-time data, adaptive/predictive | p.3 | PDF | Pillar | Live bank feed + SSE; rules + LightGBM; Copilot over MCP; policy replay; analyst-label retraining | Agent is conversational + proposals; no autonomous multi-step flow. Acceptable for p.7's "augmentation-first" |
+| R3 | Enterprise-grade: governed, secure, trusted, stable, optimised | p.3 | PDF | Pillar | Action classes, server-side approval, public lockdown, audit chain, guardrail tests | No identity, no DB, in-memory audit. State plainly (§4) |
 | R4 | Human-led, agent-operated; agents execute, humans oversee | p.2, p.4 | PDF | Frontier Firm framing | Agent investigates and proposes; analyst approves | Matches "Phase 2: human-led agents" (p.4). Claim Phase 2, not Phase 3 |
-| R5 | See the whole process: flow, actors, policies, outcomes | p.6 | PDF | Design method | README demo flow; context.md | Add the 8-stage map (§6) to the deck |
+| R5 | See the whole process: flow, actors, policies, outcomes | p.6 | PDF | Design method | README; context.md | Keep the 8-stage map (§6) current |
 | R6 | Decompose into agent-able jobs with inputs/decisions/outputs | p.6 | PDF | Design method | 22 tools, each bounded with typed inputs | Document the job table (§9) |
 | R7 | Select the starting slice by value × feasibility × data readiness | p.6 | PDF | Scoping | Slice = mule-ring investigation after the alert | Say why: mule rings are the costliest manual work; data is synthetic but shaped like UPI |
 | R8 | Enterprise-ready agent: APIs/events, modular tools, config over code | p.6 | PDF | Extensibility | REST + MCP from one route set; policy as config with replay | Good |
-| R9 | Safety & compliance: identity/permissions, policy/RAG, tracing | p.6 | PDF | Trust | Tracing: audit trail (today). Permissions: action classes (today) | Identity: missing. Policy RAG: missing → Copilot Studio knowledge (P1) |
+| R9 | Safety & compliance: identity/permissions, policy/RAG, tracing | p.6 | PDF | Trust | Tracing: audit trail. Permissions: action classes | Identity: missing. Policy RAG: missing → Copilot Studio knowledge (P1) |
 | R10 | Scale along the chain: compose agents, handoffs, systems of record, ROI | p.6 | PDF | Growth | Power Automate handoff; Power BI export; Foundry-ready model | No system of record. Roadmap only |
-| R11 | Augmentation-first; automate only low-risk reversible steps | p.7 | PDF | FSI risk posture | Agent limited to class 1–2 (today) | Done |
+| R11 | Augmentation-first; automate only low-risk reversible steps | p.7 | PDF | FSI risk posture | Agent limited to class 1–2 | Done |
 | R12 | Explainability, audit trails, approvals | p.7 | PDF | Regulatory defensibility | Evidence bundles with tx ids, SHAP reasons, "insufficient" confidence, audit chain, approvals | Approver identity missing |
 | R13 | Ecosystem over custom build: compose via APIs, don't replace KYC/AML/core platforms | p.7 | PDF | Realism | `/ingest` API; MCP; CSV export | Position MuleTrace as the investigation layer on top of an existing TMS (not a TMS replacement) |
-| R14 | Metrics: manual-review rate, decision time, QA pass rate, fraud loss, false-positive rate | p.7 | PDF | Measure value | Alerts → rings; IBM precision/recall/lift; false alarms on ordinary customers (1.6% synthetic) | No time measurement; §13 |
+| R14 | Metrics: manual-review rate, decision time, QA pass rate, fraud loss, false-positive rate | p.7 | PDF | Measure value | Alerts → rings; IBM precision/recall/lift; false alarms on ordinary customers (1.6% synthetic) | No time measurement; §12 |
 | R15 | Rules + ML; device/behavioural enrichment; triage alerts to cases for block/release | p.7, p.17 | PDF | Core capability | 5 rules + classifier; device sharing; cases | No login/onboarding events, no block/release on single transactions |
 | R16 | Entity resolution and graph analytics for network risk | p.17 | PDF | Mule networks | Ring grouping by linked money + shared devices; graph view | Good. Strongest differentiator |
 | R17 | Auto-compiled evidence packs (timeline, entities, features used) | p.17–18 | PDF | Investigator speed | `/alert|network/{id}/evidence`: claim, computations with formulas, cited txns, gaps | Good |
 | R18 | Automated SAR/STR drafting; outcomes feed back into rules/models | p.17–18 | PDF | Learning loop | STR draft + checklist; labels → retrain (v1→v2) | Good. Recovery/disputes missing (out of slice) |
-| R19 | RAG over policies/runbooks; HITL with auditable traces; challenger monitoring | p.17 | PDF | Governance | Audit traces today; policy replay acts as a challenger for rule changes | Policy RAG missing (P1) |
+| R19 | RAG over policies/runbooks; HITL with auditable traces; challenger monitoring | p.17 | PDF | Governance | Audit traces; policy replay acts as a challenger for rule changes | Policy RAG missing (P1) |
 | R20 | Four agents: Rules & Policy, Investigator Triage, Link Analysis & Narrative, Guardrail Q&A | p.17, p.19 | PDF example | Illustration | One agent with tool groups that cover the first three roles | §7: keep one agent; add Q&A as a knowledge source |
 | R21 | Governance strip: App Insights, tracing & monitoring, evaluations, safety & compliance, identity | p.19 | PDF example | Platform | Audit trail + guardrail checks + IBM eval | App Insights/Entra not wired. Roadmap |
 | R22 | Roles: fraud investigators, AML/compliance officers, sanctions, SecOps | p.17 | PDF | Users | Analyst console + Copilot | No role separation (P1 with identity) |
@@ -70,7 +70,7 @@ Written 18 Oct 2026 (demo day), for the MuleTrace team. Sources: `FSI_Meaningful
 | Recovery, disputes | **Missing** | Out of slice |
 | Feedback loop | **Implemented** | Analyst labels + dismantled rings → retrain new version |
 
-**Hackathon subset worth showing:** ingestion → rules + ML → ring → evidence → agent investigation → proposal → human approval → case + STR → feedback. Everything else stays out of the demo.
+**Core flow:** ingestion → rules + ML → ring → evidence → agent investigation → proposal → human approval → case + STR → feedback. Everything else is out of scope.
 
 ### 3.2 Agentic architecture
 One Copilot Studio agent with 17 MCP tools forwarded in-process to REST routes, so the agent and the dashboard return identical answers. Instructions forbid calculating, require citations and confidence words, and force "insufficient evidence" behaviour. Deterministic logic (rules, rings, numbers) lives in Python; the LLM only selects tools and phrases answers. This is the right split.
@@ -80,11 +80,11 @@ One Copilot Studio agent with 17 MCP tools forwarded in-process to REST routes, 
 | Question | Answer |
 |---|---|
 | Investigator's operational interface? | Yes, embedded in the dashboard (Demo website channel) and in Teams/M365 |
-| Calls governed backend actions? | Yes, via MCP. Since today only class 1–2 tools |
+| Calls governed backend actions? | Yes, via MCP. Only class 1–2 tools |
 | Retrieves approved policies? | **No.** No knowledge source attached |
-| Initiates workflows? | Proposals (today). Power Automate fires on the analyst's approval |
+| Initiates workflows? | Proposals. Power Automate fires on the analyst's approval |
 | Respects user identity? | **No.** Agent auth is off and the MCP tool uses the maker's connection (TODO.md §1.1) |
-| Traceable record? | Yes since today: every tool call in `/audit` |
+| Traceable record? | Yes: every tool call in `/audit` |
 
 ### 3.4 Engineering quality
 
@@ -93,27 +93,26 @@ One Copilot Studio agent with 17 MCP tools forwarded in-process to REST routes, 
 | API & contracts | Clean FastAPI with Pydantic validation; OpenAPI and MCP generated from one source |
 | Storage | **In memory only.** Restart loses cases, labels, audit |
 | Ingestion reliability | Single process tick loop; requests applied inside the tick, so no mid-detection mutation. No idempotency keys on `/ingest` |
-| Idempotency | Dismantle 409s on repeat; proposals idempotent (today); case actions guarded by state |
-| AuthN/AuthZ | **None** on the console. Today: tunnel lockdown + optional MCP key |
+| Idempotency | Dismantle 409s on repeat; proposals idempotent; case actions guarded by state |
+| AuthN/AuthZ | **None** on the console. Tunnel lockdown + optional MCP key |
 | Secrets | `.demo.env` git-ignored; webhook URL never committed. Good |
-| Logging/tracing | Audit trail (today). No App Insights |
+| Logging/tracing | Audit trail. No App Insights |
 | Tests | Engine self-check, classifier self-check, guardrail check (31), `npm run build`. `flow.check.mjs` fails on Node 20 (imports `.ts`; needs Node ≥ 22.6 type stripping), pre-existing |
-| Demo reliability | One-command launcher, fallbacks for every Microsoft piece. Good |
+| Reliability | One-command launcher, fallbacks for every Microsoft piece. Good |
 | Honest labelling | Simulated freeze and FIU-IND filing are labelled "simulated" in UI and STR. Good |
 
 ---
 
-## 4. Jury-style scorecard
+## 4. Scorecard
 
 | Criterion (PDF p.3) | Score /10 | Why it might lose points |
 |---|---|---|
-| Business impact | 7 | "14 → 3" is on rings we planted. No time-saved measurement. IBM recall is ~1% (9 of 843 test laundering accounts at a 118-alert budget): a judge who reads `eval.json` will see it |
+| Business impact | 7 | "14 → 3" is on rings we planted. No time-saved measurement. IBM recall is ~1% (9 of 843 test laundering accounts at a 118-alert budget), visible in `eval.json` |
 | Innovation | 8 | Ring-first investigation, time-ordered trail, evidence-cited agent, policy replay and label-driven retraining are distinctive. Single agent may look less "agentic" than p.19 |
 | Enterprise-grade | 6 (was 3) | Approval and lockdown are now real and tested. Still: no sign-in, no persistence, maker-connection agent |
 | Microsoft stack | 7 | Copilot Studio over MCP, Power Automate, Teams/M365 channel, Foundry-ready. Foundry not deployed; no Entra, no App Insights |
-| Demo | 8 | Live, phone-driven, memorable. Risk: tunnel/Wi-Fi |
 
-**Most likely loss reasons:** (1) "who approved it?" → "the analyst at the console", single role by design; named users come with Entra ID sign-in; (2) "is this measured on real data?" → synthetic; (3) "where are the four agents?"; (4) "does your agent know the PMLA rules?" → no grounded source.
+**Likely questions:** (1) "who approved it?" → "the analyst at the console", single role by design; named users come with Entra ID sign-in; (2) "is this measured on real data?" → synthetic; (3) "where are the four agents?"; (4) "does your agent know the PMLA rules?" → no grounded source.
 
 ---
 
@@ -121,9 +120,9 @@ One Copilot Studio agent with 17 MCP tools forwarded in-process to REST routes, 
 
 | P | Gap | Evidence | Status |
 |---|---|---|---|
-| P0 | Freeze approval enforced only by prompt | old rule 6; `dismantleRing` in MCP | **Done today** |
-| P0 | Anonymous tunnel exposed reset/policy/dismantle | no auth, `--allow-anonymous` | **Done today** (lockdown) |
-| P0 | No trace of agent actions | none | **Done today** (`/audit`) |
+| P0 | Freeze approval enforced only by prompt | old rule 6; `dismantleRing` in MCP | **Done** |
+| P0 | Anonymous tunnel exposed reset/policy/dismantle | no auth, `--allow-anonymous` | **Done** (lockdown) |
+| P0 | No trace of agent actions | none | **Done** (`/audit`) |
 | P0 | Copilot Studio still lists `dismantleRing` until refreshed | Copilot caches tool list | **Team action:** refresh tools + paste new instructions |
 | P1 | No policy-grounded regulatory Q&A | no knowledge source | Next: Copilot Studio knowledge (§7) |
 | P1 | No user identity / roles | `CONSOLE` actor | Next: Entra sign-in (Easy Auth on App Service) |
@@ -140,10 +139,10 @@ One Copilot Studio agent with 17 MCP tools forwarded in-process to REST routes, 
 
 **Target users:** AML/fraud investigators and the Principal Officer at Indian banks (FIU-IND STRs), p.17 roles.
 
-**Differentiator to say out loud (all true and demonstrable):**
+**Differentiators:**
 1. *Rings, not alerts*: entity resolution over money and devices (p.17 "limited linkage across accounts/devices/merchants; mule networks hard to identify").
 2. *Every number has its transactions*: the agent cannot calculate; it quotes the engine and cites ids, and says "insufficient evidence" when appropriate.
-3. *The agent can't freeze*: enforced by the API, shown live (negative test in §12).
+3. *The agent can't freeze*: enforced by the API (`check_guardrails.py`).
 4. *Victims aren't frozen*: sources go to review.
 5. *Rules you can test before you switch them on*: replay shows rings that would be lost.
 
@@ -166,7 +165,7 @@ One Copilot Studio agent with 17 MCP tools forwarded in-process to REST routes, 
 
 **One agent, not four** [Rec]. The p.19 diagram is an example. Three of its roles are already bounded tool groups behind one agent, and adding orchestration between LLM agents would add failure modes without adding capability. The deterministic engine is the orchestrator for anything that matters.
 
-| p.19 role | MuleTrace today |
+| p.19 role | MuleTrace |
 |---|---|
 | Rules & policy agent | `getPolicy`, `replayPolicy` (proposes, never applies) |
 | Investigator triage agent | `explainAlert`, `explainRing`, `explainAccountRisk`, `listAlerts`, `proposeDismantle` |
@@ -222,7 +221,7 @@ flowchart LR
 | Stranger calls /mcp | `MCP_KEY` (optional) | 401 logged | `mcp_key_ok` | `mcp_auth 401` | "With MCP_KEY set…" |
 | Prompt injection via tool args | Typed schemas; length limits; ids regex | 422/400 | Pydantic/Query | tool_call status | "Oversized free text…" |
 | Prompt injection via data | Ingested data is ids/amounts/enums only; names are system-generated; rule 11 | n/a | `Transfer` model | n/a | "Ingest rejects non-id…" |
-| Fabricated regulation | Rule 12 + approved knowledge only | manual eval | Copilot Studio | transcript | Demo negative test (§12) |
+| Fabricated regulation | Rule 12 + approved knowledge only | manual eval | Copilot Studio | transcript | Negative test (§11) |
 | LLM miscalculates | Rule 1; numbers only from engine with formulas | evidence UI | engine | tool outputs | manual eval |
 | Rule change goes live unreviewed | Agent has replay only; apply is console-only | audit | route set | `apply_policy` before/after | "replayPolicy leaves the live policy unchanged" |
 | Audit tampering | SHA-256 hash chain | `intact:false` | `audit_intact()` | `/audit` | "Editing an audit entry is detected" |
@@ -230,7 +229,7 @@ flowchart LR
 | Unnamed approver | Single analyst role by design; Entra ID sign-in for named users | n/a | n/a | actor = analyst (console) | P1 |
 | Data loss on restart | **Open**: in memory | n/a | n/a | n/a | P1 |
 
-**Action classes** are design categories for this demo, not a substitute for a bank's policy or law.
+**Action classes** are design categories for this prototype, not a substitute for a bank's policy or law.
 
 ---
 
@@ -260,15 +259,15 @@ flowchart LR
 | P1 | Persist cases + audit (SQLite → Azure SQL) | `app.py` | 0.5 day | restart keeps cases; chain still verifies |
 | P2 | Triage disposition proposals per alert (hold/escalate/clear) | `app.py`, UI | 0.5 day | proposals queue; approve/reject |
 | P2 | App Insights traces for tool calls | `app.py` | 2 h | one trace per tool call |
-| P3 | Login/onboarding signals, step-up, disputes | many | days | out of hackathon scope |
+| P3 | Login/onboarding signals, step-up, disputes | many | days | out of scope |
 
 ---
 
 ## 11. Test plan
 
-**Automated now:** `python3 check_guardrails.py` (31 checks: unauthorised agent action, stale tool, idempotency, oversized/injected arguments, tunnel blocks ×6, LAN phones allowed, MCP key, single execution, victims not frozen, replay safety, malformed ingest, audit completeness, tamper detection); `python3 muletrace.py`; `python3 xai.py`; `cd web && npm run build`.
+**Automated now:** `python3 backend/tests/check_guardrails.py` (32 checks: unauthorised agent action, stale tool, idempotency, oversized/injected arguments, tunnel blocks ×6, LAN phones allowed, MCP key, single execution, victims not frozen, replay safety, malformed ingest, audit completeness, tamper detection); `python3 backend/muletrace.py`; `python3 backend/xai.py`; `cd web && npm run build`.
 
-**Manual before judging (with expected safe behaviour):**
+**Manual (with expected safe behaviour):**
 
 | Test | Expected | Pass if |
 |---|---|---|
@@ -281,42 +280,18 @@ flowchart LR
 
 ---
 
-## 12. Jury demo script (one scenario, synthetic data, labelled as such)
-
-Scenario: **Fan-In / Fan-Out mule ring** (8 victims → hub → 8 mules on one device → ATM). All data synthetic; freezes and FIU-IND filing are simulated.
-
-1. **Problem (20 s):** "Monitoring systems raise one alert per account. Investigators drown, and the ring behind them stays invisible." (p.17 challenges.)
-2. **Live detection (40 s):** press **3**. Alerts pop, then collapse into one ring. Headline: alerts → rings.
-3. **Evidence (40 s):** Evidence tab, hover a figure → those transfers light up. "Every number has its transactions."
-4. **Agent investigates (60 s):** Ask Copilot: *"Why is NET-x one ring? Cite transactions."* → claim, computations, [TX…] ids, confidence word.
-5. **Negative test: grounding (20 s):** *"What does the law say the fine is for filing this STR late?"* → "I can't verify that from an approved source. Check with Compliance."
-6. **Agent proposes, can't act (40 s):** *"Dismantle NET-x."* → "PRP-001 is waiting for an analyst… Nothing has been locked yet." The console shows the red **Awaiting your approval** banner. Say: "The agent has no tool that freezes. That's enforced in the API, not the prompt."
-7. **Human approves (30 s):** **Review & Approve → Lock 10 Accounts**. 8 sources go to review (possible victims). Outlook email arrives (Power Automate).
-8. **Audit (20 s):** **Cases** shows *PRP-001 proposed by Copilot → approved in the console → dismantled*; optionally open `/audit` on the laptop: tool calls with arguments and timings, `intact: true`.
-9. **Learning (20 s):** label an over-scored account "Not a Mule" → retrain v2.
-10. **Honest numbers (20 s):** IBM public data: same 118-alert budget, classifier caught 9 vs rules 2 (7.7× vs 1.7× lift over chance, AUC 0.68). Small sample; recall is low.
-
-**Fallbacks:** Copilot down → Evidence tab **Ask** buttons + show `check_guardrails.py` output; tunnel down → same; Wi-Fi down → backup video.
-
----
-
-## 13. Business-value measurement plan
+## 12. Business-value measurement plan
 
 | Metric | Baseline | Method | Target | Status |
 |---|---|---|---|---|
 | Alerts → cases (manual-review units) | 1 alert = 1 review | count alerts vs rings after 3 attacks | ≥ 3× reduction | **Measured on synthetic:** ~14 → 3 |
-| Investigation time per ring | analyst with raw ledger only | time 2 teammates: ledger-only vs MuleTrace, same ring | ≥ 50% faster | **Not measured.** Do this before the next round |
+| Investigation time per ring | analyst with raw ledger only | time 2 teammates: ledger-only vs MuleTrace, same ring | ≥ 50% faster | **Not measured.** |
 | Evidence completeness | STR checklist items supported | `checklist` count per ring | all automatable items supported | measurable now |
 | Detection quality (public data) | rules | `eval_ibm.py --ai` | lift > rules at equal budget | **Measured (IBM):** 7.7× vs 1.7×, AUC 0.68, 9 vs 2 caught of 843 |
 | False alarms on ordinary customers | n/a | `xai.py` | ≤ 5% | **Measured (synthetic):** 1.6% |
-| Unauthorised-action prevention | prompt only | `check_guardrails.py` | 100% | **Measured:** 31/31 |
+| Unauthorised-action prevention | prompt only | `check_guardrails.py` | 100% | **Measured:** 32/32 |
 | Audit completeness | none | each consequential action has an entry | 100% | covered by check 11 |
-| Tool latency | n/a | `ms` in audit entries | p95 < 1 s | collect during rehearsal |
+| Tool latency | n/a | `ms` in audit entries | p95 < 1 s | not collected yet |
 
 Never quote the PDF's figures (e.g. "30–50% faster", p.9) as ours.
 
----
-
-## 14. Submission narrative
-
-MuleTrace starts where transaction monitoring stops. Instead of a queue of per-account alerts, investigators get a handful of mule rings, each with a time-ordered money trail, every figure tied to the transactions behind it, and possible victims separated from mules. A Copilot Studio agent investigates through the same governed API over MCP: it cannot calculate, it must cite, it says "insufficient evidence" when the data doesn't support a conclusion, and it cannot freeze anything. It can only propose, and the API, not the prompt, holds the action for an analyst's approval, with every tool call and decision on a tamper-evident audit trail. An explainable classifier learns from analysts' verdicts, and on IBM's public AML data it found 7.7× more laundering than chance where fixed rules found 1.7×. That is the PDF's "human-led, agent-operated" pattern for fraud & AML (p.7, p.17), built small enough to be real.

@@ -58,13 +58,13 @@ The app has no authentication today; these endpoints inherit the deployment's pr
 Try it
 bash
 # a return path, irregular timing: three calls a few seconds apart (bank time moves 30x)
-curl -XPOST localhost:8000/ingest -H 'content-type: application/json' -d '[{"sender":"JUDGE-01","receiver":"JUDGE-02","amount":80000}]'
-curl -XPOST localhost:8000/ingest -H 'content-type: application/json' -d '[{"sender":"JUDGE-02","receiver":"JUDGE-03","amount":79000}]'
-curl -XPOST localhost:8000/ingest -H 'content-type: application/json' -d '[{"sender":"JUDGE-03","receiver":"JUDGE-01","amount":50000}]'
-curl localhost:8000/account/JUDGE-01/return-paths
+curl -XPOST localhost:8000/ingest -H 'content-type: application/json' -d '[{"sender":"CUST-01","receiver":"CUST-02","amount":80000}]'
+curl -XPOST localhost:8000/ingest -H 'content-type: application/json' -d '[{"sender":"CUST-02","receiver":"CUST-03","amount":79000}]'
+curl -XPOST localhost:8000/ingest -H 'content-type: application/json' -d '[{"sender":"CUST-03","receiver":"CUST-01","amount":50000}]'
+curl localhost:8000/account/CUST-01/return-paths
 # an inferred cash link
-curl -XPOST localhost:8000/ingest -H 'content-type: application/json' -d '[{"sender":"JUDGE-10","receiver":"JUDGE-ATM","amount":49000,"channel":"atm"}]'
-curl -XPOST localhost:8000/ingest -H 'content-type: application/json' -d '[{"sender":"JUDGE-WALK","receiver":"JUDGE-20","amount":49000,"channel":"cash"}]'
+curl -XPOST localhost:8000/ingest -H 'content-type: application/json' -d '[{"sender":"CUST-10","receiver":"CUST-ATM","amount":49000,"channel":"atm"}]'
+curl -XPOST localhost:8000/ingest -H 'content-type: application/json' -d '[{"sender":"CUST-WALK","receiver":"CUST-20","amount":49000,"channel":"cash"}]'
 curl localhost:8000/suspected
 
 Launching the fan and structuring attacks close together can produce a few weak, coincidental cash-link edges between unrelated rings. That is the ambiguity discount and the 0.30 cap doing their job; review and reject them.

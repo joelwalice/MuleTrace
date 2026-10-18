@@ -1,11 +1,13 @@
-"""Guardrail self-check: drives the real API in-process (no server, no extra packages). `python3 check_guardrails.py`
+"""Guardrail self-check: drives the real API in-process (no server, no extra packages). `python3 backend/tests/check_guardrails.py`
 
 Each check is a negative or adversarial case: the agent tries to act without approval, the public tunnel is used for
 a consequential route, an unknown tool is called, the audit trail is tampered with, malformed input is sent."""
 import asyncio
 import json
 import os
+import sys
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # the backend modules
 os.environ.pop("PLAYBOOK_WEBHOOK", None)  # never email from a test
 os.environ.pop("FOUNDRY_SCORING_URL", None)
 os.environ["PUBLIC_URL"] = "https://abc123-8000.inc1.devtunnels.ms"
@@ -62,7 +64,7 @@ def plant_ring():
         A.LIVE.recompute()
         if A.LIVE.nets and not A.LIVE.queue:
             return A.LIVE.nets[0]["network_id"]
-    raise SystemExit("No ring formed; the engine self-check (python3 muletrace.py) should be run first")
+    raise SystemExit("No ring formed; the engine self-check (python3 backend/muletrace.py) should be run first")
 
 
 async def main():

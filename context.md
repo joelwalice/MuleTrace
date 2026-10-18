@@ -1,23 +1,20 @@
 # MuleTrace: Project Context
 
-Last updated: 18 Oct 2026, demo day.
-
-**Start with the Team briefing (5 minutes).** Sections 1–9 below it are the full reference: architecture, every endpoint, the change log and the design rules. Use them when you're changing code or answering a hard judge question.
+**Start with the Team briefing (5 minutes).** Sections 1–9 below it are the full reference: architecture, every endpoint, the change log and the design rules. Use them when you're changing code.
 
 ## Team briefing
 
 ### Where we are
-- **Everything in the demo works end to end:** live bank feed → Red Team attacks → alerts → rings → money trail → evidence → STR draft → Dismantle → Power Automate email.
-- **Live on Microsoft:** the Copilot Studio agent `MuleTrace Investigator` (MCP tools, embedded as **Ask Copilot**, also in Teams) and the Power Automate playbook (Outlook email with the STR on Dismantle, tested `sent (202)`).
-- **Today's change: guardrails** (change log item 18; the full write-up is in [`AUDIT.md`](AUDIT.md)).
-  - The agent can no longer freeze anything. It calls `proposeDismantle`, and the console shows **Awaiting your approval** with **Reject** and **Review & Approve**.
+- **Works end to end:** live bank feed → Red Team attacks → alerts → rings → money trail → evidence → STR draft → Dismantle → Power Automate email.
+- **Live on Microsoft:** the Copilot Studio agent `MuleTrace Investigator` (MCP tools, embedded as **Ask Copilot**, also in Teams) and the Power Automate playbook (eradication email with the STR draft on Dismantle).
+- **Guardrails** (change log item 18; full write-up in [`docs/AUDIT.md`](docs/AUDIT.md)):
+  - The agent can't freeze anything. It calls `proposeDismantle`, and the console shows **Awaiting your approval** with **Reject** and **Review & Approve**.
   - Through the public tunnel, only the agent's tools answer. Everything else returns 403.
   - Every agent call, approval and case action goes into a hash-chained audit trail (`GET /audit`).
-  - `python3 check_guardrails.py` passes **31/31**.
-- **Not pushed yet:** today's changes are uncommitted on `feat/copilot-mcp-playbook`. Until they're pushed, pulling won't get you the guardrails.
-- **Optional, not done:** the Foundry endpoint (the classifier runs locally; don't claim it runs in Foundry) and Power BI.
+  - `python3 backend/tests/check_guardrails.py` passes **32/32**.
+- **Optional, not done:** the Foundry endpoint (the classifier runs locally) and Power BI.
 
-### The pitch in four lines
+### In four lines
 1. Analysts drown in single-account alerts, while mule rings hide across many accounts.
 2. MuleTrace groups alerts into rings: **about 14 alerts → 3 rings** once the three attacks are launched.
 3. It traces the money hop by hop. Every figure cites its transaction IDs, and possible victims are sent to review, not frozen.
@@ -25,64 +22,46 @@ Last updated: 18 Oct 2026, demo day.
 
 **Against RBI's MuleHunter.AI:** MuleHunter flags individual mule accounts. MuleTrace starts after the flag: it groups the ring, traces the money, separates victims from mules and drafts the STR for FIU-IND.
 
-### Numbers you can say (and how to say them)
-| Claim | Say it like this |
+### Numbers (and how to state them)
+| Claim | How to state it |
 |---|---|
 | Alert reduction | "About 14 alerts become 3 rings." It's measured on our own synthetic attacks, so call it that. |
-| IBM AML benchmark | "Our classifier, retrained on IBM history, gets **7.7× lift**; the rules alone get 1.7×." The sample is small (118-alert budget), so say so if asked. Never show the rules-only number as a win. |
+| IBM AML benchmark | "Our classifier, retrained on IBM history, gets **7.7× lift**; the rules alone get 1.7×." The sample is small (118-alert budget). Never show the rules-only number as a win. |
 | Classifier | LightGBM with exact SHAP reasons. Held-out AUC is about 0.96–0.98 on synthetic data and 0.68 on IBM. |
 | STR deadline | "Within 7 days of establishing suspicion." That wording holds under both FIU-IND (working days) and RBI (days). |
 | ₹50,000 PAN band | Say "the long-standing ₹50,000 PAN threshold". It may have been replaced by the Income-tax Rules, 2026, which we haven't confirmed. |
 
-**If a judge pushes:** there's no sign-in, and approvals are recorded as "analyst (console)". There's no database, so a restart loses cases and the audit trail. All data is synthetic. We use one agent, not several. Say these plainly; `AUDIT.md` §1 has the wording.
+**Limits:** there's no sign-in, and approvals are recorded as "analyst (console)". There's no database, so a restart loses cases and the audit trail. All data is synthetic. We use one agent, not several. `docs/AUDIT.md` §1 has the detail.
 
 ### Run it
 ```
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once (Mac: brew install libomp)
+python3 -m venv .venv && .venv/bin/pip install -r backend/requirements.txt   # once (Mac: brew install libomp)
 cd web && npm install                                                 # once
-.venv/bin/uvicorn app:app --reload        # API on :8000
+cd backend && ../.venv/bin/uvicorn app:app --reload   # API on :8000
 cd web && npm run dev                     # dashboard on :3000
-./demo-mac.sh                             # demo day on the Mac: tunnel + API + phone build in one go
+./demo-mac.sh                             # on the Mac: tunnel + API + phone build in one go
 ```
-Secrets (`PUBLIC_URL`, `PLAYBOOK_WEBHOOK`, `TUNNEL`) live in the git-ignored `.demo.env` on the demo laptop. Never commit them or paste them in chat. Windows steps are in [`README.md`](README.md).
+Secrets (`PUBLIC_URL`, `PLAYBOOK_WEBHOOK`, `TUNNEL`) live in the git-ignored `.demo.env`. Never commit them or paste them in chat. Windows steps are in [`README.md`](README.md).
 
-**Checks before you push:** `python3 muletrace.py`, `python3 check_guardrails.py`, `cd web && node flow.check.mjs`, `NEXT_DIST_DIR=.next-test npm run build`.
-
-### Demo flow (5 min)
-1. Start from **More → New Bank**, with the clock at 30× and Autopilot off.
-2. Press **2** (Pass-Through Chain) and use **Trace Flow** to show the waits between hops.
-3. A judge scans the QR code (**More → Judge Phone QR Code**), opens `/send` and taps **Structuring**. Their phone says **Caught**.
-4. Press **1** and **3**, and the headline settles at about 14 alerts → 3 rings.
-5. **Evidence → Ask Copilot:** "Why is AL-x suspicious?", then "Draft the STR", then the Policy replay (turn off Structuring, Replay, and rings drop from 3 to 2).
-6. Ask Copilot to "Dismantle NET-x". It answers that the proposal is **awaiting approval**. In the console, **Review & Approve** locks the accounts, and the playbook email arrives.
-7. Close on the IBM lift and the MuleHunter answer.
-
-The full script and the morning checklist are in [`TODO.md`](TODO.md) §3.
-
-### Before judging (open items)
-- [ ] **Push** today's changes.
-- [ ] In Copilot Studio, refresh the MCP tool's tools: `proposeDismantle` should appear and `dismantleRing` should be gone. Paste the new [`microsoft/agent-instructions.md`](microsoft/agent-instructions.md) and publish.
-- [ ] Through the real tunnel, `curl -X POST $PUBLIC_URL/live/reset` should return 403, and Ask Copilot should still answer "List the mule rings".
-- [ ] Rehearse the new approval step, test from a real phone on the laptop hotspot, and record a backup video.
-- [ ] Check the ₹50k PAN rule on incometaxindia.gov.in (this only changes the slide wording, not the code).
+**Checks before you push:** `python3 backend/muletrace.py`, `python3 backend/tests/check_guardrails.py`, `python3 backend/tests/test_relations.py`, `cd web && node flow.check.mjs`, `NEXT_DIST_DIR=.next-test npm run build`.
 
 ### Gotchas
 - **Dashboard shows stale CSS or "Failed to load chunk":** run `rm -rf web/.next && npm run dev`. Test builds always use `NEXT_DIST_DIR=.next-test`.
-- **Phones can't load `/send`:** use `./demo-mac.sh` (a production build) rather than `npm run dev`, and put phones on the laptop hotspot. Venue Wi-Fi often isolates devices.
-- **The agent's tools fail:** the dev tunnel `muletrace` isn't being hosted. `demo-mac.sh` hosts it.
+- **Phones can't load `/send`:** use `./demo-mac.sh` (a production build) rather than `npm run dev`, and put phones on the laptop hotspot. Public Wi-Fi often isolates devices.
+- **The agent's tools fail:** the dev tunnel isn't being hosted. `demo-mac.sh` hosts it.
 - **Dismantle says "not configured":** the API didn't get `PLAYBOOK_WEBHOOK`.
 - **The AI endpoints error on Windows:** pull the latest; it has the CRLF fix for `model/`.
-- **A weak 2-account "insufficient" ring appears by itself:** that's the random feed. It's harmless and shows honest confidence, but start the demo from New Bank.
+- **A weak 2-account "insufficient" ring appears by itself:** that's the random feed. It's harmless and shows honest confidence, but start from New Bank for a clean bank.
 
 ### Where things are
 | File | What it is |
 |---|---|
-| [`README.md`](README.md) | Run steps, dashboard guide, Judge Q&A, "Claims you can defend" |
-| [`TODO.md`](TODO.md) | What's left, team decisions, demo-day checklist |
-| [`AUDIT.md`](AUDIT.md) | Audit against Microsoft's *AI Apps That Matter*: guardrails, scorecard, submission narrative |
+| [`README.md`](README.md) | Run steps, dashboard guide, FAQ |
+| [`docs/TODO.md`](docs/TODO.md) | Open items and decisions |
+| [`docs/AUDIT.md`](docs/AUDIT.md) | Audit against Microsoft's *AI Apps That Matter*: guardrails, scorecard, measurement plan |
 | [`microsoft/`](microsoft/README.md) | Copilot Studio, Power Automate and Power BI setup; agent instructions |
-| [`plan.md`](plan.md) | Original plan for the Investigation Copilot |
-| `muletrace.py` · `app.py` · `xai.py` · `web/` | Engine · API (+ MCP) · classifier · dashboard |
+| [`docs/plan.md`](docs/plan.md) | Original plan for the Investigation Copilot |
+| `backend/` (`muletrace.py` · `app.py` · `xai.py` · `relations.py`, `data/`, `model/`, `tests/`) · `web/` | Engine · API (+ MCP) · classifier · relationship inference · dashboard |
 
 ---
 
@@ -90,11 +69,11 @@ The full script and the morning checklist are in [`TODO.md`](TODO.md) §3.
 
 An AML (anti-money-laundering) SOC console that finds **money-mule networks**, not individual fraud alerts.
 
-> A live bank feed streams in (plus red-team attacks and audience transfers) → rules raise alerts → alerts are grouped into rings → the money trail is drawn in time order → an STR (Suspicious Transaction Report) is drafted → one click dismantles the ring and triggers Power Automate.
+> A live bank feed streams in (plus red-team attacks and phone transfers) → rules raise alerts → alerts are grouped into rings → the money trail is drawn in time order → an STR (Suspicious Transaction Report) is drafted → one click dismantles the ring and triggers Power Automate.
 
-- **Context:** a Microsoft-themed hackathon, 16–18 Oct 2026, with a 4-person team.
-- **Audience:** Indian judges, so amounts are in ₹ and reports are written for FIU-IND.
-- **Pitch number:** **about 14 alerts → 3 rings** once the three attacks are launched (alert reduction).
+- **Context:** a 4-person team build on the Microsoft stack.
+- **Market:** Indian banks, so amounts are in ₹ and reports are written for FIU-IND.
+- **Headline number:** **about 14 alerts → 3 rings** once the three attacks are launched (alert reduction).
 - **Positioning against RBI's MuleHunter.AI:** MuleHunter flags individual mule accounts. MuleTrace starts after the flag: it groups the ring, traces the money, separates possible victims from mules, and drafts the STR.
 
 ## 2. Architecture
@@ -104,14 +83,14 @@ muletrace.py   Python engine: synthetic data, detection rules, money trail, ring
 app.py         FastAPI: live bank engine (feed, attacks, ingest) + SSE stream + REST endpoints + MCP endpoint (/mcp) + Power Automate webhook
 eval_ibm.py    Scores the rules on the public IBM AML dataset (precision / recall / lift, attempt recall) → data/eval.json
 microsoft/     Copilot Studio agent instructions, Teams adaptive card, setup for Dev Tunnels / Copilot Studio / Power Automate / Power BI
-demo-mac.sh    Demo day on macOS: dev tunnel + API (webhook) + LAN production build; secrets from git-ignored .demo.env
+demo-mac.sh    One command on macOS: dev tunnel + API (webhook) + LAN production build; secrets from git-ignored .demo.env
 demo-lan.ps1   Same LAN build for Windows (no tunnel/webhook handling)
 data/*.csv     Written on API start, for Power BI
 web/           Next.js 16 (App Router) + Tailwind v4 + cytoscape: the SOC dashboard
   app/dashboard.tsx  page state, URL sync, SSE, panels, keyboard shortcuts, signals log
   app/graph.tsx      money-trail graph (cytoscape, preset layout from flow.ts)
   app/flow.ts        pure layout maths: hop columns, ordering, device lane, wait times
-  app/send/          /send: phone page for judges to send transfers and see them caught
+  app/send/          /send: phone page to send transfers and see them caught
   app/evidence.tsx   Evidence tab, STR checklist, Policy sheet, Ask Copilot sheet
   app/ui.tsx         primitives: NavLink/AccountLink (deep links), SevTag, Barcode chart, Readout…
   app/lib.ts         types, API helpers, Intl formatters (₹, en-IN dates), risk bands
@@ -121,9 +100,9 @@ web/           Next.js 16 (App Router) + Tailwind v4 + cytoscape: the SOC dashbo
 
 ### Run it
 ```
-.venv/bin/uvicorn app:app --reload          # API :8000 (docs at /docs)
+cd backend && ../.venv/bin/uvicorn app:app --reload   # API :8000 (docs at /docs)
 cd web && npm run dev                       # dashboard :3000
-python3 muletrace.py                        # engine self-check
+python3 backend/muletrace.py                # engine self-check
 cd web && node flow.check.mjs               # graph layout self-check
 ```
 
@@ -142,7 +121,7 @@ cd web && node flow.check.mjs               # graph layout self-check
 ## 3. Engine (muletrace.py)
 
 - **`Bank` class:** mints accounts, devices and transfers. It's shared by `history()` (startup data, plus the CSV export with the 3 canonical rings) and the live feed. `bank.ring(kind, start)` builds a fresh ring of any kind at any bank-clock time.
-- **Canonical demo history** (self-check and CSV export): fixed seed 42. 500 normal accounts and about 10k transactions over 30 days, plus **3 hidden rings**:
+- **Canonical seed history** (self-check and CSV export): fixed seed 42. 500 normal accounts and about 10k transactions over 30 days, plus **3 hidden rings**:
   1. **Structuring:** 6 small depositors make deposits of ₹45,000–49,900, just under the ₹50,000 PAN threshold, into a collector, who wires the money out.
   2. **Pass-through chain:** a dormant account (800 days) wakes up, ₹4,80,000 passes through 2 mules sharing device DEV9001, then exits.
   3. **Fan-in/fan-out:** 8 senders → a hub → 8 mules sharing DEV9002 → one ATM exit.
@@ -235,11 +214,11 @@ cd web && node flow.check.mjs               # graph layout self-check
    - **Responsive:** the orientation is chosen by best fit (phones go top-to-bottom), and tall columns pack tighter.
    - **Copy:** the pass-through reason now says "Received ₹X and sent ₹Y onward", replacing "forwarded 216%".
 
-9. **Live bank instead of replay** (the user wanted a "hackathon based live transaction view", not a canned demo).
-   - **Engine:** an endless feed on a bank clock, with Red Team attacks (console, keys 1–3, autopilot), `POST /ingest`, and the `/send` judge page ("Try to Fool It" scenarios plus a live "Caught" readout).
+9. **Live bank instead of replay** (the user wanted a live transaction view, not a canned replay).
+   - **Engine:** an endless feed on a bank clock, with Red Team attacks (console, keys 1–3, autopilot), `POST /ingest`, and the `/send` phone page ("Try to Fool It" scenarios plus a live "Caught" readout).
    - **Controls:** **New Bank** gets a two-step confirm.
    - **Copy:** the ticker and empty states were rewritten for a feed with no end.
-   - **Tests:** verified end to end. A chain attack was caught as a ring, and judge structuring from a phone was caught.
+   - **Tests:** verified end to end. A chain attack was caught as a ring, and structuring sent from a phone was caught.
 
 10. **Investigation Copilot** (plan.md; DeepSeek's "winning idea", corrected for India and honesty).
    - **Engine:** each rule hit records its evidence (the transaction IDs plus computed figures with formulas). `detect()` takes policy parameters (`rules`, `ratio`, `fan`, `dormant_days`), and `confidence()` returns `insufficient` when only the device rule fires or the trail has fewer than 2 transfers.
@@ -254,10 +233,10 @@ cd web && node flow.check.mjs               # graph layout self-check
    - **Fixed:** a side-sheet focus effect re-ran on every live tick, which stole focus from the sliders. The effect is now keyed once per open, with a ref for `onClose`.
    - **Microsoft:** `microsoft/` holds the agent instructions, a Teams adaptive card, and step-by-step setup for Dev Tunnels, Copilot Studio (REST API tools, Web app and Teams channels), Power Automate and Power BI.
 
-11. **Judge-readability pass** (the user said the dashboard was information-overloaded for a demo video).
+11. **Readability pass** (the user said the dashboard was information-overloaded).
    - **Reading order:** panels are headed **Step 1 Plant a Mule Ring → Step 2 Pick a Ring → Step 3 Follow the Money → Step 4 Check the Evidence**. Picking a ring opens the Evidence tab.
    - **Summary:** now a plain pipeline (transfers checked → alerts raised → mule rings → accounts locked), each with a one-line caption. The barcode chart and the hero block were removed (snapshot `hourly` dropped).
-   - **Header:** status, time, Pause, Rules, Ask Copilot, and **More**. More holds clock speed, Autopilot, the judge phone page, New Bank and shortcuts. The footer was removed.
+   - **Header:** status, time, Pause, Rules, Ask Copilot, and **More**. More holds clock speed, Autopilot, the phone page, New Bank and shortcuts. The footer was removed.
    - **Graph:**
      - The legend is cut to Low→High risk, Flagged, Source (maybe a victim) and Shared phone.
      - One plain caption replaces the corner annotations.
@@ -299,11 +278,11 @@ cd web && node flow.check.mjs               # graph layout self-check
      - Transactions and data gaps fold away in native `<details>`.
      - "Alerts in this ring" was deleted, because the ring list shows it.
    - **Case panel:** the paragraph that repeated the Evidence claim was deleted, so the graph gets the space.
-   - **Server:** the SSE snapshot is serialised once per version and shared by every client (projector plus judge phones), instead of once per client per tick.
+   - **Server:** the SSE snapshot is serialised once per version and shared by every client (projector plus phones), instead of once per client per tick.
    - **Graph:** if cytoscape's chunk fails to load, it says so, with Reload and Table options, instead of drawing nothing.
    - **Builds:** `next.config.ts` reads `NEXT_DIST_DIR`. Test builds use `.next-test`, so they never touch the dev server's `.next`. A shared `.next` caused the "Failed to load chunk … cytoscape" error.
 
-15. **Close the loop: cases, analyst feedback, retraining, judge QR.**
+15. **Close the loop: cases, analyst feedback, retraining, phone QR.**
    - **Cases:** status runs open → str_filed (simulated FIU-IND acknowledgement) → closed, with an `events` audit trail. `POST /case/{id}/{file_str|close}` returns 409 for an out-of-order step. A second dismantle of the same ring now also returns 409.
    - **Labels:** `POST /account/{id}/label?mule=` stores the analyst verdict (no value clears it). Dismantling auto-labels the frozen accounts as mules; sources are not labelled, since they may be victims.
    - **Retraining:**
@@ -317,19 +296,19 @@ cd web && node flow.check.mjs               # graph layout self-check
      - **More → Judge Phone QR Code:** a `qrcode` npm package rendering an SVG locally; it warns on localhost.
    - **Self-check:** an analyst "not a mule" on the top-scoring account yields v2, which scores it lower.
 
-16. **IBM benchmark run, Windows fixes, judge phones over LAN** (17 Oct, evening).
+16. **IBM benchmark run, Windows fixes, phones over LAN**.
    - **IBM AML HI-Small** downloaded with `kagglehub` (no token needed) into `data/ibm/` (git-ignored). First 2.5M rows: 732k USD transactions, 153k accounts, 1,236 laundering.
-     - **Rules:** 0.9× lift, 12 of 260 attempts touched. They're tuned to the demo's attacks: IBM laundering waits a median 9.5 h before forwarding and has a median of 2 senders / 1 receiver, so 30-minute pass-through and >5 fan rarely fire.
+     - **Rules:** 0.9× lift, 12 of 260 attempts touched. They're tuned to the synthetic attacks: IBM laundering waits a median 9.5 h before forwarding and has a median of 2 senders / 1 receiver, so 30-minute pass-through and >5 fan rarely fire.
      - **`eval_ibm.py --ai`:** trains the classifier on the earliest 65% of transactions, tests on the rest (features and labels from disjoint windows, no KYC/device/opening dates). AUC 0.68 (synthetic-only model: 0.60). At the rules' alert budget (118): AI caught 9, rules 2, so **7.7× vs 1.7× lift**. Small sample; say so.
      - The split is by transaction count, not time span: IBM's last days hold a sparse tail of almost only laundering rows.
    - **Accuracy card:** leads with the classifier's IBM lift when `eval.json` has an `ai` block, with "rules alone 1.7×" beside it; the tooltip holds the counts.
    - **Copilot instructions:** "How accurate is it?" now leads with the `ai` block and states the rules' weakness on IBM plainly.
    - **Fixed: model unreadable on Windows.** Git's `core.autocrlf` checked `model/mule_classifier.txt` out with CRLF, which LightGBM rejects ("Model format error"), so every AI endpoint failed. `.gitattributes` now marks `model/*.txt -text`, and `xai.load()` strips `\r` anyway.
-   - **Judge phones:** `demo-lan.ps1` builds and serves the API and dashboard on the laptop's Wi-Fi address. Production build on purpose: the Next dev server blocks its scripts for non-localhost hosts.
+   - **Phones over LAN:** `demo-lan.ps1` builds and serves the API and dashboard on the laptop's Wi-Fi address. Production build on purpose: the Next dev server blocks its scripts for non-localhost hosts.
    - **Repo hygiene:** root `.gitignore` (`.venv/`, `__pycache__/`, `data/ibm/`, `.next-test/`); compiled `.pyc` files untracked.
    - **Remaining work and sign-ins:** `TODO.md`.
 
-17. **Microsoft integrations live** (18 Oct, demo day, in the hackathon lab tenant on a Mac).
+17. **Microsoft integrations live** (lab tenant, on a Mac).
    - **Copilot Studio agent** `MuleTrace Investigator` (Claude Opus 5.5), published with the Demo website and Teams + Microsoft 365 channels, no authentication, embedded in **Ask Copilot**.
      - The new Copilot Studio has no REST API tool, so `app.py` gained `POST /mcp` (MCP, stateless JSON) exposing the same 17 tools by forwarding to the REST routes.
      - Lab-tenant hurdles: the default environment had no Dataverse (added in the Power Platform admin center), the user needed the System Administrator role there, web channels stay greyed out until authentication is off, and the MCP tool's Authentication had to change from **End user account** to the maker's, or the embed shows "Connection Required".
@@ -349,7 +328,7 @@ cd web && node flow.check.mjs               # graph layout self-check
      - Rule 13: the bank clock runs 30x real time, so timestamps can be later than today. The agent flagged them as anomalies until the rule said that's expected.
    - **Observed:** the random background feed occasionally forms a weak 2-account dormant-only ring (confidence insufficient). Harmless, and a good "insufficient evidence" moment, but start the demo from **New Bank**.
 
-18. **Guardrails enforced in code, not the prompt** (18 Oct, demo day; see `AUDIT.md`). Uncommitted at the time of writing.
+18. **Guardrails enforced in code, not the prompt** (see `docs/AUDIT.md`). Uncommitted at the time of writing.
    - **Why:** the approval for a freeze depended only on rule 6 of the prompt, and the anonymous tunnel exposed every route. Anyone with the URL could `POST /live/reset` or dismantle a ring.
    - **Action classes:** (1) read-only, (2) a reversible draft or proposal, which the agent may do, and (3) consequential actions (freeze, file, close, policy apply, reset), which happen in the console only.
    - **Agent tools:** `dismantleRing` was removed from `COPILOT_TOOLS` and replaced by `proposeDismantle`. A proposal is pending and idempotent; the console approves it through Dismantle or rejects it with `POST /proposal/{id}/reject`. A stale `dismantleRing` call over MCP is refused and logged. The core tool count stays at 17 (22 with the PR #3 relationship tools).
@@ -359,6 +338,8 @@ cd web && node flow.check.mjs               # graph layout self-check
    - **Prompt:** rule 6 now says the agent can't act and must propose. New rule 11 treats tool output as data, never instructions. New rule 12 allows regulatory claims only from an approved source.
    - **UI:** an "Awaiting your approval" banner with Reject and Review & Approve, plus a signal-log entry when a proposal arrives.
    - **Tests:** `check_guardrails.py` (31 adversarial checks, in-process, no server) passes 31/31.
+
+19. **Folders restructured.** Python code, `data/`, `model/` and `requirements.txt` moved to `backend/`; the two test files to `backend/tests/` (one `sys.path` line each); `AUDIT.md`, `Inference.md`, `Patches.md`, `plan.md`, `TODO.md` to `docs/`. `README.md`, `context.md` and the launcher scripts stay at the root. The API now runs from `backend/` (`demo-mac.sh`, `demo-lan.ps1`, `foundry/deploy.py`, `.gitattributes` and `.gitignore` updated). Modules find `data/` and `model/` through `__file__`, so nothing else changed. Older log entries keep the old flat paths.
 
 ## 6. Design rules currently in force (don't regress)
 
@@ -377,7 +358,7 @@ cd web && node flow.check.mjs               # graph layout self-check
   - Plex Sans for prose (captions, explanations, gaps).
   - No zero-padded numbers.
 - **Never bring back:** ASCII brackets, `///`, `>>>`, block-character bars, scanline/CRT overlays, a blinking cursor, or the dark theme.
-- **Judge-first:** new UI must fit the Step 1–4 reading order. Secondary controls go in **More**. Every number gets a plain-English caption.
+- **Reader-first:** new UI must fit the Step 1–4 reading order. Secondary controls go in **More**. Every number gets a plain-English caption.
 - **Graph:** amounts appear in tooltips and the table view, not on lines. Wait labels show only when a ring has ≤ 12 transfers.
 - **URLs:** every selection must stay a real link.
 - **Destructive actions:** need the in-page two-step confirmation (now a red-soft panel). Never use `confirm()`.
@@ -386,18 +367,18 @@ cd web && node flow.check.mjs               # graph layout self-check
 
 - **Power Automate** (set up in the portal):
   1. Instant cloud flow → trigger "When an HTTP request is received" (a **premium** connector), with **Who can trigger** set to **Anyone**. Paste the JSON schema with the case fields: `case_id, network_id, alert_ids[], frozen[], review[], summary, str_draft, status, score, total_in`.
-  2. Actions: Outlook email with the STR draft (live in the demo). Teams post and a Planner task due in 7 days where the tenant has them.
+  2. Actions: Outlook email with the STR draft (live). Teams post and a Planner task due in 7 days where the tenant has them.
   3. Run the API with `PLAYBOOK_WEBHOOK='…'` (`demo-mac.sh` reads it from `.demo.env`).
 - **Copilot Studio:** an MCP tool on `<PUBLIC_URL>/mcp` (22 tools; or a REST API tool from `/copilot/openapi.json` in older layouts), with the instructions in `microsoft/agent-instructions.md`. Embedded via the Demo website channel. See `microsoft/README.md`.
-- **Power BI:** use the live `/export/*.csv` through Get data → Web, or the static `data/*.csv` (the canonical demo dataset).
+- **Power BI:** use the live `/export/*.csv` through Get data → Web, or the static `data/*.csv` (the canonical sample dataset).
 - **Azure:** API on App Service (`uvicorn app:app --host 0.0.0.0`, set `CORS_ORIGINS`); `web/` on Static Web Apps or App Service, with `NEXT_PUBLIC_API` set at build time.
 
 ## 8. Known issues and open items
 
-- **IBM AML run done** (item 16). The rules alone barely beat chance on IBM; pitch the retrained classifier's 7.7× and be upfront about the rules.
+- **IBM AML run done** (item 16). The rules alone barely beat chance on IBM; lead with the retrained classifier's 7.7× and be upfront about the rules.
 - **Foundry endpoint not deployed yet.** It needs an Azure subscription, `az login` and a hub-based Foundry project. See `foundry/README.md`.
 - **Copilot Studio agent and Power Automate are live** (item 17). They depend on the dev tunnel running and the webhook URL being passed to the API; `demo-mac.sh` handles both.
-- **Facts to verify before the slides:** the STR deadline checks out (7 days from the Principal Officer establishing suspicion; FIU-IND says working days, RBI says days). The **₹50k PAN rule may be out of date:** reports say the Income-tax Rules, 2026 (from 1 April 2026) replaced Rule 114B's daily test with an annual ₹10 lakh aggregate. Unconfirmed against the official notification; see `TODO.md`.
+- **Facts to verify:** the STR deadline checks out (7 days from the Principal Officer establishing suspicion; FIU-IND says working days, RBI says days). The **₹50k PAN rule may be out of date:** reports say the Income-tax Rules, 2026 replaced Rule 114B's daily test with an annual ₹10 lakh aggregate. Unconfirmed against the official notification; see `docs/TODO.md`.
 - **Next dev server stale CSS or "Failed to load chunk":** run `rm -rf .next && npm run dev`. Agents must build with `NEXT_DIST_DIR=.next-test` so they never touch the dev server's `.next`.
 - **Leftover processes:** three uvicorn processes (ports 8765, 8770, 8771) were started inside the agent sandbox and can't be killed, not even with `sudo`. They're harmless and should go away after quitting Claude Code or rebooting.
 - **Not built:** CSV upload (cut, since `/ingest` covers incoming data), user sign-in and roles (only `/mcp` has an optional key), a database (cases and the audit trail are lost on restart), an ML anomaly score, and an LLM call inside the app (Copilot Studio handles that).
@@ -405,17 +386,3 @@ cd web && node flow.check.mjs               # graph layout self-check
   - The explanation text says "3 alert(s)".
   - The selected ring card's white header picks up faint scanlines.
   - Node prints a harmless module-type warning when running `flow.check.mjs`.
-
-## 9. Demo script (5 min)
-
-1. **Problem:** analysts drown in alerts, and mule rings hide across many accounts.
-2. **The bank is live:** the ledger streams and the bank clock runs.
-3. Press **2** (Pass-Through Chain). The ring assembles hop by hop. Use **Trace Flow** for the waits.
-4. A judge opens **/send** on a phone and taps **Structuring**. Their account becomes a ring on the big screen, and their phone says **Caught**.
-5. Launch **1** and **3**. The headline settles at about 14 alerts → 3 rings.
-6. **Evidence tab, then Ask Copilot:**
-   - "Why is AL-10x suspicious?" The answer cites `[TX…]` and the graph lights those edges.
-   - "Draft the STR." The checklist shows 4 supported and 3 missing items.
-   - **Policy:** turn off Structuring → Replay → "Rings 3 → 2, missed NET-x" → Defaults.
-7. **Dismantle Ring → Lock N Accounts** (the fan-in/fan-out ring). Sources go to review, and the playbook emails the STR draft.
-8. **Credibility:** IBM AML lift, and the answer on MuleHunter.AI.

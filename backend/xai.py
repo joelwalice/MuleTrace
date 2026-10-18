@@ -1,7 +1,7 @@
 """Explainable mule classifier: LightGBM on per-account behaviour, explained with exact TreeSHAP contributions.
 
-    python3 xai.py train      # build the training set, train, evaluate on a held-out bank, save model/
-    python3 xai.py            # self-check: explanations add up, constraints hold, held-out quality is sane
+    python3 backend/xai.py train      # build the training set, train, evaluate on a held-out bank, save model/
+    python3 backend/xai.py            # self-check: explanations add up, constraints hold, held-out quality is sane
 
 Rules (muletrace.detect) say *which pattern* fired; this model says *how mule-like the whole account looks*
 and which behaviours pushed the score up or down. Every contribution is in log-odds and they sum exactly to
@@ -306,7 +306,7 @@ if __name__ == "__main__":
         print(json.dumps(card["holdout"], indent=2), "\ntop features:", card["top_features"])
         sys.exit()
     booster, card = load()
-    assert booster, "no model yet: run `python3 xai.py train`"
+    assert booster, "no model yet: run `python3 backend/xai.py train`"
     Xt, yt = dataset(98, n_normal=500, n_txns=10000, n_rings=20, n_legit=40)
     p = booster.predict(Xt)
     m = metrics(yt, p)

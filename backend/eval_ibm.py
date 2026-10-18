@@ -1,6 +1,6 @@
 """Score MuleTrace's rules on the IBM AML dataset (labels it didn't create).
 Download: kaggle datasets download ealtman2019/ibm-transactions-for-anti-money-laundering-aml -f HI-Small_Trans.csv
-Run:      python eval_ibm.py HI-Small_Trans.csv [--limit 1000000] [--patterns HI-Small_Patterns.txt] [--ai] [--out data/eval.json]
+Run:      python3 backend/eval_ibm.py HI-Small_Trans.csv [--limit 1000000] [--patterns HI-Small_Patterns.txt] [--ai] [--out backend/data/eval.json]
 Uses USD rows only (rule thresholds are in USD for this dataset); self-transfers are dropped.
 --patterns scores whole laundering attempts (IBM's ring-level ground truth): an attempt counts as caught
 when at least one of its accounts is flagged. --out writes the result for the dashboard's benchmark card.
@@ -144,7 +144,7 @@ if __name__ == "__main__":
     ap.add_argument("csv")
     ap.add_argument("--limit", type=int, help="read only the first N rows (the full file needs a few GB of RAM)")
     ap.add_argument("--patterns", help="HI-Small_Patterns.txt, to score whole laundering attempts")
-    ap.add_argument("--out", help="write the result as JSON (data/eval.json feeds the dashboard card)")
+    ap.add_argument("--out", help="write the result as JSON (backend/data/eval.json feeds the dashboard card)")
     ap.add_argument("--ai", action="store_true", help="also train the classifier on the earlier days, test on the later ones")
     args = ap.parse_args()
     res = run(args.csv, args.limit, args.patterns, args.ai)

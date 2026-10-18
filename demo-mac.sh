@@ -35,7 +35,7 @@ trap 'kill "${pids[@]}" 2>/dev/null' EXIT
 if [ -n "${TUNNEL:-}" ] && command -v devtunnel >/dev/null; then
   devtunnel host "$TUNNEL" >"$root/.devtunnel.log" 2>&1 & pids+=($!)
 fi
-(cd "$root" && .venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000) & pids+=($!)
+(cd "$root/backend" && ../.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000) & pids+=($!)
 
 echo
 echo "Dashboard: http://$ip:3000    Judge phones: http://$ip:3000/send    API: http://$ip:8000/docs"

@@ -1,4 +1,4 @@
-"""MuleTrace API. `uvicorn app:app --reload` -> http://localhost:8000 (OpenAPI at /docs for Copilot Studio connector).
+"""MuleTrace API. `cd backend && uvicorn app:app --reload` -> http://localhost:8000 (OpenAPI at /docs for Copilot Studio connector).
 
 Live mode: a bank clock runs continuously (default 30x real time) and an endless feed of ordinary customer
 transactions streams in. Mule attacks are launched on demand (POST /inject/{kind}) or by autopilot, and anyone can
@@ -829,7 +829,7 @@ async def apply_policy(p: Policy):
 def evaluation():
     f = DATA / "eval.json"
     if not f.exists():
-        return {"status": "not run", "how": "python3 eval_ibm.py HI-Small_Trans.csv --patterns HI-Small_Patterns.txt --out data/eval.json"}
+        return {"status": "not run", "how": "python3 backend/eval_ibm.py HI-Small_Trans.csv --patterns HI-Small_Patterns.txt --out backend/data/eval.json"}
     return {"status": "ok", **json.loads(f.read_text())}
 
 
@@ -986,7 +986,7 @@ def ai_explain(ids):
         except Exception as e:
             note = f"Foundry endpoint unavailable ({type(e).__name__}); scored with the local copy of the model"
     if MODEL is None:
-        raise HTTPException(503, "Classifier not trained yet: run `python3 xai.py train`")
+        raise HTTPException(503, "Classifier not trained yet: run `python3 backend/xai.py train`")
     return xai.explain(MODEL, rows), "local model", note
 
 

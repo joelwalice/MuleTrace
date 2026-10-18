@@ -1,11 +1,14 @@
-"""Run: python3 -m unittest test_relations -v   (or pytest). Synthetic data only."""
+"""Run: python3 backend/tests/test_relations.py -v   (or pytest backend/tests). Synthetic data only."""
 import json
 import math
+import os
 import random
+import sys
 import unittest
 from collections import defaultdict
 from datetime import datetime, timedelta
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # the backend modules
 import relations as R
 
 T0 = datetime(2026, 10, 1, 9, 0)

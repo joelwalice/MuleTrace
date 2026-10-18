@@ -19,7 +19,7 @@ $env:PYTHONUTF8 = "1"
 if (-not $SkipBuild) {
     Push-Location "$root\web"; npm run build; if ($LASTEXITCODE) { Pop-Location; throw "web build failed" }; Pop-Location
 }
-$api = Start-Process -FilePath "$root\.venv\Scripts\python.exe" -WorkingDirectory $root -PassThru -NoNewWindow `
+$api = Start-Process -FilePath "$root\.venv\Scripts\python.exe" -WorkingDirectory "$root\backend" -PassThru -NoNewWindow `
     -ArgumentList "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"
 Write-Host "`nDashboard: http://${Ip}:3000    Judge phones: http://${Ip}:3000/send    API: http://${Ip}:8000/docs"
 Write-Host "Windows may ask to allow Python and Node through the firewall: allow Private networks. Ctrl+C stops both.`n"

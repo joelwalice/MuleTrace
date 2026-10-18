@@ -6,8 +6,8 @@ The model runs inside the API by default. This folder deploys the same model to 
 
 | File | What it is |
 |---|---|
-| `../xai.py` | Features, training data, model, explanations, and a self-check (`python3 xai.py train`, `python3 xai.py`) |
-| `../model/` | The trained model (`mule_classifier.txt`) and its model card (`card.json`) |
+| `../backend/xai.py` | Features, training data, model, explanations, and a self-check (`python3 backend/xai.py train`, `python3 backend/xai.py`) |
+| `../backend/model/` | The trained model (`mule_classifier.txt`) and its model card (`card.json`) |
 | `score.py` | The endpoint's scoring script. It reuses `xai.explain`, so both paths return identical answers |
 | `conda.yaml` | The endpoint environment (Python 3.11, LightGBM 4.7, Azure ML inference server) |
 | `deploy.py` | Registers the model and environment, and creates the endpoint and deployment |
@@ -24,7 +24,7 @@ The model runs inside the API by default. This folder deploys the same model to 
    ```
    .venv-azure/bin/python foundry/deploy.py --subscription <id> --resource-group <rg> --workspace <project>
    ```
-   - The VM defaults to `Standard_DS2_v2`, which bills while the endpoint exists. **Delete the endpoint after the demo.**
+   - The VM defaults to `Standard_DS2_v2`, which bills while the endpoint exists. **Delete the endpoint when you're done with it.**
    - If your subscription has no quota for that size, request quota or pass `--sku` with a size you have.
 4. **Get the key:** Foundry → your project → **Models + endpoints** → `muletrace-xai` → **Consume**.
 5. **Point the API at Foundry:**
@@ -42,8 +42,8 @@ curl -s $FOUNDRY_SCORING_URL -H "Authorization: Bearer $FOUNDRY_KEY" -H 'content
 
 The 12 values follow `xai.NAMES`, in order: passthrough ratio, fast-forward share, minutes to first forward, max senders per hour, max receivers per hour, near-threshold deposits, cash share, dormancy days, account age, KYC risk, shared-device accounts, and volume vs expected. Use `null` for an unknown value. The response gives the probability plus `reasons[]`, each with `text` and `contribution`.
 
-## What to say to judges
+## What it does and doesn't do
 
 - **What it does:** "The rules say *which* pattern fired. The classifier says how mule-like the *whole account* looks, and why, using exact SHAP values from the model itself."
-- **What it adds:** "It complements the rules. In the demo it flags ring sources and exits that no rule alerted, and it scores the rules' false alarms on ordinary customers low."
+- **What it adds:** "It complements the rules. In the synthetic bank it flags ring sources and exits that no rule alerted, and it scores the rules' false alarms on ordinary customers low."
 - **Honesty:** "It's trained on synthetic banks that include legitimate look-alikes: payroll, merchants, cash shops and one-off big transfers. On a bank it never saw, AUC is about 0.96 and it flags about 1.6% of ordinary customers. Real deployment means retraining on the bank's labelled cases."

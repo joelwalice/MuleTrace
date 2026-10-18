@@ -1,2 +1,2 @@
 # LightGBM can't parse its model file with CRLF line endings (git core.autocrlf on Windows)
-model/*.txt -text
+backend/model/*.txt -text

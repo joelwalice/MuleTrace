@@ -1,8 +1,8 @@
 # MuleTrace: Investigation Copilot Plan
 
-Status: **P0–P2 built, 17 Oct 2026.** CSV upload was cut, because `/ingest` already covers incoming data. The IBM run is done (`context.md` item 16). **18 Oct:** the Copilot Studio agent and the Power Automate playbook are live (`context.md` item 17). The connector below became an MCP tool on `/mcp`, because the current Copilot Studio has no REST API tool, and the lab playbook emails the STR because the lab user has no Teams. The Foundry endpoint is still optional. **What's left is in [`TODO.md`](TODO.md).**
+Status: **P0–P2 built.** CSV upload was cut, because `/ingest` already covers incoming data. The IBM run is done (`context.md` item 16). The Copilot Studio agent and the Power Automate playbook are live (`context.md` item 17). The connector below became an MCP tool on `/mcp`, because the current Copilot Studio has no REST API tool, and the lab playbook emails the STR because the lab user has no Teams. The Foundry endpoint is still optional. **What's left is in [`TODO.md`](TODO.md).**
 
-See `microsoft/README.md`. Demo day is 18 Oct.
+See `microsoft/README.md`.
 Sources: the two DeepSeek threads (the "which idea wins" verdict and the "go" build pack), checked against this repo.
 
 ## 1. Verdict: can the codebase take this idea?
@@ -24,17 +24,17 @@ Sources: the two DeepSeek threads (the "which idea wins" verdict and the "go" bu
 
 ## 2. Where we deliberately differ from the DeepSeek pack
 
-These are corrections. Following the pack literally would hurt us in front of Indian judges or under Q&A.
+These are corrections. Following the pack literally would be wrong for Indian banks.
 
 1. **STR, not SAR.** India files an STR (Suspicious Transaction Report) with FIU-IND. Keep every label and route as STR.
 2. **No invented numbers.** The pack hard-codes "precision 0.72, recall 0.61, 3 of 5 rings". Those were never measured. The card shows only what `eval_ibm.py` writes, and reads "not run yet" until then.
 3. **Our thresholds, our currency.** The pack's "₹9,500 just under 10K" is the US rule. Ours is ₹45,000–49,999 under the ₹50,000 PAN threshold. The USD band stays only in `eval_ibm.py`.
 4. **"Time-ordered", not "causal".** Already a design rule in `context.md`.
 5. **Real ID formats.** Citations use our IDs, `[TX0001234]` and `[AC0508]`, not `TXN-`/`ACC-`.
-6. **No hard-coded API key in code.** The key comes from an env var, like `PLAYBOOK_WEBHOOK`. When unset (local demo), the API stays open.
-7. **Live bank stays the stage.** The pack's demo opens with "upload CSV → run detection". Ours is already live, so upload becomes an optional "bring your own data" moment, not the opening.
+6. **No hard-coded API key in code.** The key comes from an env var, like `PLAYBOOK_WEBHOOK`. When unset (local use), the API stays open.
+7. **Live bank first.** The pack starts with "upload CSV → run detection". Ours is already live, so upload becomes an optional "bring your own data" path.
 8. **Honest gaps.** "Gaps" lists only what our data truly lacks: no KYC refresh dates, no beneficial ownership, no device data on ingested or uploaded rows. We don't make up "no KYC refresh in 14 months".
-9. **Unverified pitch lines.** "MuleHunter in 26 banks" and "analysts spend 4–6 hours per case" need a source before they go on a slide. Otherwise say "MuleHunter.AI is live in Indian banks" and drop the hours figure.
+9. **Unverified claims.** "MuleHunter in 26 banks" and "analysts spend 4–6 hours per case" need a source before they're used. Otherwise say "MuleHunter.AI is live in Indian banks" and drop the hours figure.
 
 ## 3. What to build
 
@@ -66,7 +66,7 @@ These are corrections. Following the pack literally would hurt us in front of In
 - **Style:** current industrial theme, `.tl` labels, ≥ 4.5:1 contrast. Show confidence as a word plus a glyph, never colour alone.
 
 ### P0: Copilot Studio agent (Person D, mostly no code)
-1. **Connector:** a custom connector from `/openapi.json`. This needs a public URL: Azure App Service, or a dev tunnel for the demo.
+1. **Connector:** a custom connector from `/openapi.json`. This needs a public URL: Azure App Service, or a dev tunnel.
 2. **Actions:** `GET /alert/{id}/evidence`, `GET /network/{id}/evidence`, `GET /alert/{id}/graph`, `GET /compare`, `GET /network/{id}` (STR draft), `POST /network/{id}/dismantle`.
 3. **Instructions:** the pack's hard rules, with our fixes:
    - Never calculate. Quote tool output only, and cite `[TX…]` / `[AC…]`.
@@ -81,7 +81,7 @@ These are corrections. Following the pack literally would hurt us in front of In
    - Draft STR (with checklist)
    - Insufficient Evidence (fallback)
 5. **Dashboard embed:** `NEXT_PUBLIC_COPILOT_URL` (Copilot Studio web-chat URL) shows an **Ask Copilot** drawer as an iframe.
-   - **If it's unset or the venue Wi-Fi blocks it,** the drawer falls back to the next-question buttons. They call the same evidence endpoints and print the deterministic answer, so the demo never depends on Copilot Studio being up.
+   - **If it's unset or the network blocks it,** the drawer falls back to the next-question buttons. They call the same evidence endpoints and print the deterministic answer, so nothing depends on Copilot Studio being up.
 
 ### P1: STR completeness checklist
 Add `checklist` to `GET /alert/{id}` and `GET /network/{id}`:
@@ -118,37 +118,7 @@ Add `checklist` to `GET /alert/{id}` and `GET /network/{id}`:
 - a shared ring
 - the shortest money path within the trace window
 
-## 4. Build order (remaining ~30 hours)
-
-| Block | Person A (engine) | Person B (API) | Person C (web) | Person D (Microsoft) |
-|---|---|---|---|---|
-| 0–3h | evidence from `detect()` + self-check | `/alert,/network/{id}/evidence`, `API_KEY` | Evidence tab skeleton against mock JSON | Deploy API to App Service or a dev tunnel; connector from `/openapi.json` |
-| 3–6h | `detect()` policy params + confidence | `/policy`, `/policy/replay`, `/compare` | Evidence tab live; graph highlight from rows | Agent instructions + 5 topics; test on NET-1/2/3 |
-| 6–10h | IBM eval run → `data/eval.json` (needs Kaggle) | STR checklist; `/evaluation` | Policy drawer + replay result | Ask Copilot embed URL; Power Automate re-test |
-| 10–14h | `/upload` (P2) | Hardening: limits, 422s, docs | Eval card; fallback Q&A buttons | Teams card polish; record the backup video |
-| 14h+ | **Freeze features.** Rehearse the demo, update README/context, run all checks, browser pass on phone + projector | | | |
-
-**Never cut:** evidence bundle, Evidence tab, Copilot agent (or its fallback), graph, dismantle → Power Automate.
-**Cut in this order:** upload → compare → eval card (show "not run"; don't fake it) → policy apply (keep replay).
-
-## 5. Demo script (5 min, merged)
-
-| Time | Beat | On screen |
-|---|---|---|
-| 0:00 | Problem: "Detection is getting solved. Investigating fast enough, with evidence a regulator accepts, is not." | Live console, feed streaming |
-| 0:30 | Press **2**: a pass-through chain assembles hop by hop | Graph, ticker, queued count |
-| 1:15 | Click the ring → Trace Flow → +9m waits | Graph, case panel |
-| 1:45 | **Ask Copilot:** "Why is AL-10x suspicious?" The answer cites `[TX…]`, and the Evidence tab lights the edges | Copilot drawer + Evidence tab |
-| 2:30 | "Draft the STR" → checklist: 4 supported, 2 missing. "DRAFT, needs analyst sign-off." | STR dialog |
-| 3:00 | **Policy:** drop pass-through to 60% → Replay → alert / ring delta. "Test a rule on today's data before you deploy it." | Policy drawer |
-| 3:30 | Judge's phone at **/send** → Structuring → "Caught" | Phone + big screen |
-| 4:00 | **Dismantle → Lock N** → Teams card, Planner task | Teams tab |
-| 4:30 | Eval card: "on IBM's public data, which we didn't plant: precision / recall / lift" | Summary card |
-| 4:50 | Close: "MuleHunter detects. MuleTrace investigates." | |
-
-Rehearsed answer to "isn't this just Copilot on your API?": "The Copilot can't calculate anything. Every number comes from deterministic rules, with the transaction IDs attached, and when the data doesn't support a conclusion it says *insufficient evidence*."
-
-## 6. Skills and tools to use
+## 4. Skills and tools to use
 
 - **UI** (all in `~/.agents/skills`):
   - `industrial-brutalist-ui` (the current theme) for the Evidence tab and Policy drawer
@@ -165,32 +135,9 @@ Rehearsed answer to "isn't this just Copilot on your API?": "The Copilot can't c
   - this file and `context.md` (change log item 10 when it lands)
   - the project memory, which points here
 
-## 7. Open questions for the team
+## 5. Open questions for the team
 
-1. **Public URL for Copilot Studio:** Azure App Service (needs the subscription), or a dev tunnel on the demo laptop?
+1. **Public URL for Copilot Studio:** Azure App Service (needs the subscription), or a dev tunnel on a laptop?
 2. **Kaggle login** for the IBM run. Who has it?
-3. **Embed or not:** does the venue network allow the Copilot Studio web chat? If not, the fallback buttons carry the demo.
+3. **Embed or not:** does the network allow the Copilot Studio web chat? If not, the fallback buttons answer the same questions.
 4. **Upload:** keep it in scope (P2), or cut now and save ~3h?
-
-## 8. Award checklist (17 Oct, evening)
-
-**Built and tested:**
-- live bank with attacks and the judge phone page (QR on screen)
-- rules, rings and the time-ordered money trail
-- the Evidence verdict
-- explainable LightGBM with SHAP reasons
-- rule policy replay
-- case workflow with audit trail and STR filing
-- analyst feedback → retrain (human-in-the-loop AI)
-- Copilot tool spec
-- Foundry deployment package
-
-**Biggest remaining wins, all needing the team's sign-ins:**
-1. **Microsoft Foundry endpoint live:** `az login` plus a hub-based project, then `foundry/deploy.py`. The AI panels then read "Scored live by the Microsoft Foundry endpoint".
-2. **Copilot Studio agent live:** run `devtunnel user login` and `devtunnel host`, then follow `microsoft/README.md`. Embed it with `NEXT_PUBLIC_COPILOT_URL`.
-3. **Power Automate:** set `PLAYBOOK_WEBHOOK`. Dismantle, File STR and Close each post to Teams.
-4. **IBM benchmark:** add a Kaggle token, then run `eval_ibm.py`. The accuracy card appears on its own.
-5. **Pitch:**
-   - a 5-slide deck (problem → live demo → explainable AI → Microsoft stack → honest numbers)
-   - a recorded backup video of the demo flow in the README
-

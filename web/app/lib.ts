@@ -14,7 +14,12 @@ export type Alert = {
 export type Network = {
   network_id: string; alert_ids: string[]; accounts: string[]; alerted: string[]; sources: string[];
   freeze: string[]; exits: string[]; score: number; severity: Sev; patterns: string[];
-  total_in: number; first_ts: string; last_ts: string; status: string;
+  total_in: number; first_ts: string; last_ts: string; status: string; proposal?: Proposal | null;
+};
+// The Copilot agent can only propose a dismantle; an analyst approves or rejects it here (enforced by the API).
+export type Proposal = {
+  proposal_id: string; network_id: string; status: "pending" | "approved" | "rejected"; proposed_by: string;
+  at: string; reason: string; lock: number; review: number;
 };
 export type Snapshot = {
   version: number; clock: string; running: boolean; speed: number; speeds: number[]; feed_rate: number;
@@ -37,6 +42,7 @@ export type Detail = {
   network_id: string; alert_id?: string; account_id?: string;
   // network-only
   freeze?: string[]; sources?: string[]; mules?: string[]; exits?: string[]; accounts?: string[]; alerted?: string[]; total_in?: number;
+  proposal?: Proposal | null;
   // alert-only
   upstream?: string[]; downstream?: string[]; lateral?: string[]; reasons?: string[];
   checklist: Check[];

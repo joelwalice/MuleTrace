@@ -175,6 +175,16 @@ export default function Dashboard() {
     seenAttacks.current = ids;
   }, [snap, signal]);
 
+  // Log each dismantle the Copilot agent proposes: it waits for an analyst here, the agent can't execute it.
+  const seenProposals = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (!snap) return;
+    const pending = snap.networks.filter((n) => n.proposal?.status === "pending");
+    if (seenProposals.current) for (const n of pending) if (!seenProposals.current.has(n.proposal!.proposal_id))
+      signal("high", `${n.proposal!.proposal_id} · Copilot Proposes Dismantling ${n.network_id} · Awaiting Your Approval`);
+    seenProposals.current = new Set(pending.map((n) => n.proposal!.proposal_id));
+  }, [snap, signal]);
+
   const choose = useCallback((s: Sel) => { setSel(s); setTab("graph"); setSide("evidence"); }, []);
   const openAccount = useCallback((id: string) => { setAcct(id); setSide("profile"); setTab("side"); }, []);
 
@@ -206,6 +216,11 @@ export default function Dashboard() {
       signal("high", `Couldn’t Dismantle ${id} · The API returned an error. Check its log, then try again.`);
     }
     setBusy(false);
+  };
+
+  const reject = async (id: string) => {
+    try { await post(`/proposal/${id}/reject`); signal("ok", `${id} · Copilot's Proposal Rejected · Nothing Locked`); }
+    catch { signal("high", `Couldn’t Reject the Proposal for ${id} · It May Already Be Decided`); }
   };
 
   const caseAction = useCallback(async (id: string, a: "file_str" | "close") => {
@@ -243,7 +258,7 @@ export default function Dashboard() {
               {!graph && (sel ? <GraphSkeleton /> : <Watching snap={snap} />)}
               {graph && view === "graph" && <GraphFrame />}
             </div>
-            {detail && sel ? <CasePanel detail={detail} kind={sel.kind} busy={busy} pending={detailPending} dismantle={dismantle} str={strOpen} setStr={setStrOpen}
+            {detail && sel ? <CasePanel detail={detail} kind={sel.kind} busy={busy} pending={detailPending} dismantle={dismantle} reject={reject} str={strOpen} setStr={setStrOpen}
               kase={snap.cases.find((c) => c.network_id === detail.network_id && sel.kind === "network")} act={caseAction} />
               : sel && <CaseSkeleton />}
           </section>
@@ -714,8 +729,9 @@ function Watching({ snap }: { snap: Snapshot }) {
   );
 }
 
-function CasePanel({ detail: d, kind, busy, pending, dismantle, str, setStr, kase, act }:
-  { detail: Detail; kind: "network" | "alert"; busy: boolean; pending: boolean; dismantle: (id: string) => void; str: boolean; setStr: (v: boolean) => void;
+function CasePanel({ detail: d, kind, busy, pending, dismantle, reject, str, setStr, kase, act }:
+  { detail: Detail; kind: "network" | "alert"; busy: boolean; pending: boolean; dismantle: (id: string) => void; reject: (id: string) => void;
+    str: boolean; setStr: (v: boolean) => void;
     kase?: Snapshot["cases"][number]; act: (id: string, a: "file_str" | "close") => void }) {
   const [confirm, setConfirm] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -766,6 +782,19 @@ function CasePanel({ detail: d, kind, busy, pending, dismantle, str, setStr, kas
           )}
         </div>
       </div>
+      {kind === "network" && d.proposal?.status === "pending" && !confirm && (
+        <div className="mx-4 mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-red px-3 py-2.5" role="status">
+          <p className="tl min-w-0 flex-1 text-ink">
+            <span className="font-semibold text-red">{d.proposal.proposal_id} · Awaiting your approval · </span>
+            {d.proposal.proposed_by} proposes locking {d.proposal.lock} accounts at {clock(d.proposal.at)}
+            {d.proposal.reason ? <>: “{d.proposal.reason}”</> : "."} The agent can’t execute this itself.
+          </p>
+          <div className="flex gap-1.5">
+            <button onClick={() => reject(id)} className={`${btn} bg-bg text-ink-2 hover:text-ink`}>Reject</button>
+            <button onClick={() => setConfirm(true)} className={`${btn} border-red bg-panel font-semibold text-red hover:bg-red-soft`}>Review & Approve</button>
+          </div>
+        </div>
+      )}
       {confirm && d.status !== "dismantled" && (
         <div className="mx-4 mt-3 overflow-hidden rounded-lg border border-red bg-red-soft" role="alertdialog" aria-label={`Confirm dismantling ${id}`}>
 

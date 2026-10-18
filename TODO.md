@@ -55,6 +55,12 @@ Full guide: `foundry/README.md`. On the Mac, `az` is already installed: `az logi
 - [ ] **5-slide deck:** problem → live demo → explainable AI → Microsoft stack (Copilot Studio agent over MCP, Power Automate playbook, Foundry if deployed) → honest numbers (14 alerts → 3 rings; IBM 7.7× vs 1.7×).
 - [ ] Each presenter reads `README.md` → "Claims you can defend" and "Judge Q&A".
 
+**Guardrails (18 Oct, before judging; see `AUDIT.md`)**
+- [ ] Copilot Studio → the MCP tool → refresh tools: `proposeDismantle` appears, `dismantleRing` is gone. Paste the new `microsoft/agent-instructions.md` (rules 6, 11, 12) and publish.
+- [ ] Through the real tunnel: `curl -X POST $PUBLIC_URL/live/reset` returns 403, and Ask Copilot "List the mule rings" still answers.
+- [ ] Rehearse the new step: "Dismantle NET-x" → Awaiting your approval → Review & Approve.
+- [ ] `python3 check_guardrails.py` → 31/31.
+
 **Demo morning (15 minutes before)**
 - [ ] Laptop on charge, sleep off, notifications off, browser zoom 100%.
 - [ ] Hotspot on; phones connected to it.

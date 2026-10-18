@@ -4,17 +4,54 @@ AML investigation console that groups scattered alerts into mule rings, traces t
 
 > **Alerts collapse into rings.** Launch the three attacks and about 14 alerts become 3 rings. That alert reduction is the pitch in one number.
 
-For the full change log, design rules and open items, see [`context.md`](context.md). The plan is in [`plan.md`](plan.md), and the Microsoft setup is in [`microsoft/README.md`](microsoft/README.md).
+For the full change log, design rules and open items, see [`context.md`](context.md). The plan is in [`plan.md`](plan.md), and the Microsoft setup is in [`microsoft/README.md`](microsoft/README.md). The audit against Microsoft's *AI Apps That Matter* guidance (requirements, guardrails, roadmap, demo script) is in [`AUDIT.md`](AUDIT.md).
 
 ## Run it
 
+Everything runs from two processes: the API (`app.py`) and the dashboard (`web/`). You don't run separate scripts for the AI side:
+- **Explainable AI:** the trained classifier is committed in `model/`, and the API loads it on startup. Scores and SHAP reasons are served from the API, and **Cases → Retrain Model** retrains it in-app. `python3 xai.py train` is only for rebuilding `model/` from scratch (see **Checks**).
+- **Copilot Studio:** the API itself is the MCP server (`POST /mcp`, 17 tools). Copilot only needs a public URL for it, which the dev tunnel below provides.
+
+### 1. One-time setup
 ```
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/uvicorn app:app --reload        # API on :8000, docs at /docs
-cd web && npm install && npm run dev      # dashboard on http://localhost:3000
+cd web && npm install && cd ..
+```
+
+### 2. Run locally
+```
+.venv/bin/uvicorn app:app --reload        # terminal 1: API on :8000, docs at /docs, MCP at /mcp
+cd web && npm run dev                     # terminal 2: dashboard on http://localhost:3000
 ```
 
 Open http://localhost:3000. The bank is live straight away. Plant a mule ring from **Step 1** (keys 1–3). For judges' phones, see **Judge phones** below: a phone can't reach `localhost`.
+
+### 3. Dev tunnel (for Copilot Studio and Power BI)
+Copilot Studio calls the API from Microsoft's cloud, so it needs a public HTTPS URL. One-time setup:
+```
+brew install --cask devtunnel                     # Windows: winget install Microsoft.devtunnel
+devtunnel user login                              # sign in with your Microsoft account
+devtunnel create muletrace --allow-anonymous      # persistent tunnel: the URL survives restarts
+devtunnel port create muletrace -p 8000
+```
+Each time you demo:
+```
+devtunnel host muletrace                                                     # terminal 3: prints https://<id>-8000.<region>.devtunnels.ms
+PUBLIC_URL=https://<id>-8000.<region>.devtunnels.ms \
+PLAYBOOK_WEBHOOK='https://…' .venv/bin/uvicorn app:app --reload            # restart the API with the tunnel URL (webhook optional)
+```
+- Check: `devtunnel show muletrace` lists the URL. `https://<id>-8000…/copilot/openapi.json` should show the tunnel URL under `servers`.
+- In Copilot Studio, add the tool as **Model Context Protocol (MCP)** with server URL `https://<id>-8000…/mcp` and no authentication (a browser GET on `/mcp` returns 405, which is expected).
+- Copilot web-chat embed: put `NEXT_PUBLIC_COPILOT_URL=…` in `web/.env.local`, then restart or rebuild the dashboard.
+
+### 4. Demo day in one command (macOS)
+Put the secrets in the git-ignored `.demo.env` once:
+```
+PUBLIC_URL=https://<id>-8000.<region>.devtunnels.ms
+PLAYBOOK_WEBHOOK=https://…          # Power Automate trigger URL
+TUNNEL=muletrace                    # demo-mac.sh hosts this tunnel for you
+```
+Then `./demo-mac.sh` starts the tunnel, the API and the production dashboard together (details below).
 
 **Windows (PowerShell):**
 ```
@@ -43,6 +80,8 @@ It finds the laptop's Wi-Fi address, bakes it into the dashboard (`NEXT_PUBLIC_A
 | `FOUNDRY_SCORING_URL`, `FOUNDRY_KEY` | API | unset | Score through the Microsoft Foundry endpoint (see `foundry/README.md`). Unset: the local copy of the model |
 | `PUBLIC_URL` | API | request host | Public HTTPS URL (Dev Tunnel / Azure). Copilot Studio connects to `<PUBLIC_URL>/mcp`; also written into `/copilot/openapi.json` |
 | `NEXT_PUBLIC_COPILOT_URL` | web, build time (`web/.env.local`) | unset | Copilot Studio web-chat URL (Demo website → Embed). Shows **Ask Copilot** in the header |
+| `MCP_KEY` | API | unset | Optional shared key for `/mcp`. In Copilot Studio's MCP wizard pick **API key**, header `x-api-key` |
+| `PUBLIC_LOCKDOWN` | API | `1` | Through the tunnel/public URL only the Copilot tools, `/mcp` and `/export/*` answer; everything else gets 403. Set `0` only if the dashboard itself is served from the public URL behind real sign-in |
 
 - **Live feed:** the API starts a synthetic bank with 30 days of ordinary customer history. A **bank clock** then keeps running (30× real time by default; 1× is true real time) while ordinary transactions stream in at about 2 per second, with no end. Detection reruns on every tick.
 - **Mule attacks:** each attack creates fresh accounts and plays out on the bank clock over the next 1–3 real minutes:
@@ -104,7 +143,7 @@ It finds the laptop's Wi-Fi address, bakes it into the dashboard (`NEXT_PUBLIC_A
    - **Ask Copilot:** "Why is AL-10x suspicious?" The answer cites `[TX…]`.
    - "Draft the STR": the checklist shows what's still missing.
    - **Policy:** turn off Structuring → Replay → "a ring would be missed" → Defaults.
-8. **Dismantle Ring → Lock N Accounts** (use the fan-in/fan-out ring: 10 locked, 8 to review). Sources go to review, and the Power Automate playbook emails the case and STR draft (Log: `sent (202)`). Or ask the Copilot to "Dismantle NET-x": it asks "Confirm…?" and acts only on a yes. Then **File STR** (acknowledgement number) → **Close**. **Cases** shows the audit trail.
+8. **Dismantle Ring → Lock N Accounts** (use the fan-in/fan-out ring: 10 locked, 8 to review). Sources go to review, and the Power Automate playbook emails the case and STR draft (Log: `sent (202)`). Or ask the Copilot to "Dismantle NET-x": it can only *propose* it (`proposeDismantle`). The console shows **PRP-00x · Awaiting your approval**, and nothing is locked until an analyst clicks **Review & Approve → Lock N Accounts** (or **Reject**). The API enforces this, not the prompt. Then **File STR** (acknowledgement number) → **Close**. **Cases** shows the audit trail.
 9. **Human in the loop:** on an account the AI over-scores, press **Not a Mule**, then **Cases → Retrain Model v1 → v2**. The score updates, and the panel says "LightGBM v2".
 10. **Credibility:** IBM AML results (below): the classifier retrained on IBM history gets 7.7× lift where the rules get 1.7×. Then the model card (`GET /ai/model`).
 
@@ -170,13 +209,22 @@ curl -X POST localhost:8000/ingest -H 'content-type: application/json' \
 
 - **Microsoft Foundry (explainable AI):** `foundry/deploy.py` deploys the classifier as a managed online endpoint in your Foundry project. The API then scores through it, falling back to the local model if it's unreachable. See [`foundry/README.md`](foundry/README.md).
 
-- **Copilot Studio:** **Tools → + → Add → Model Context Protocol (MCP)** with server URL `<PUBLIC_URL>/mcp` and no authentication. That adds 17 tools such as `explainAlert`, `traceRingMoney`, `compareAccounts`, `draftRingStr`, `replayPolicy`, `explainAccountRisk` and `dismantleRing`; `/mcp` forwards each call to the REST route. Older Copilot Studio layouts can upload `/copilot/openapi.json` as a REST API tool instead. Paste `microsoft/agent-instructions.md` as the instructions. Full steps, including Dev Tunnels, the Dataverse fix for lab tenants and the dashboard embed, are in [`microsoft/README.md`](microsoft/README.md).
+- **Copilot Studio:** **Tools → + → Add → Model Context Protocol (MCP)** with server URL `<PUBLIC_URL>/mcp` and no authentication. That adds 17 tools such as `explainAlert`, `traceRingMoney`, `compareAccounts`, `draftRingStr`, `replayPolicy`, `explainAccountRisk` and `proposeDismantle` (the agent has no tool that freezes, files or changes rules; see **Guardrails**); `/mcp` forwards each call to the REST route. Older Copilot Studio layouts can upload `/copilot/openapi.json` as a REST API tool instead. Paste `microsoft/agent-instructions.md` as the instructions. Full steps, including Dev Tunnels, the Dataverse fix for lab tenants and the dashboard embed, are in [`microsoft/README.md`](microsoft/README.md).
 - **Power BI:** use **Get data → Web** on `/export/alerts.csv` (and `networks`, `transactions`, `accounts`) for live data, or `data/*.csv` for the fixed demo dataset.
 - **Azure:**
   - API on App Service: startup command `uvicorn app:app --host 0.0.0.0`, and set `CORS_ORIGINS` to the web URL.
   - `web/` on Static Web Apps or App Service: `npm run build && npm start`, with `NEXT_PUBLIC_API` set at build time.
   - Run the API as a **single worker**, because the live bank lives in memory.
 - **Power Automate** (premium HTTP trigger):
+  - **When the flow (and its email) fires:** the API posts the case to `PLAYBOOK_WEBHOOK` at three moments. Nothing is sent when the ring is detected or when an alert is raised; detection alone never emails anyone.
+
+    | Trigger | From | `status` in the payload |
+    |---|---|---|
+    | **Dismantle Ring → Lock N Accounts**, or **Review & Approve** on a Copilot proposal (the agent itself can't trigger it) | `POST /network/{id}/dismantle` | `open` |
+    | **File STR** on the case | `POST /case/{id}/file_str` | `str_filed` (plus `ack`) |
+    | **Close** on the case | `POST /case/{id}/close` | `closed` |
+
+    The template below reads "STR due in 7 days", so it suits only the dismantle call. To email once per ring, wrap the Outlook action in a **Condition** on `@{triggerBody()?['status']}` equals `open`.
   1. Create an instant cloud flow with the trigger **When an HTTP request is received**, and set **Who can trigger the flow** to **Anyone**.
   2. Paste this request schema:
      ```json
@@ -218,11 +266,27 @@ curl -X POST localhost:8000/ingest -H 'content-type: application/json' \
      ```
   5. The dismantle message in the Log tab tells you whether the call was sent, isn't configured, or failed. A 401 or 403 usually means the trigger isn't set to Anyone. Each ring can only be dismantled once; launch another attack to test again.
 
+## Guardrails
+
+Enforced in `app.py`, not in the agent's prompt. `python3 check_guardrails.py` tests each one.
+
+| Action class | Examples | Who can run it |
+|---|---|---|
+| 1 · Read-only | explain, trace, compare, list, model card, `replayPolicy` (changes nothing) | Copilot agent and console |
+| 2 · Draft or proposal | STR drafts, `proposeDismantle` | Copilot agent and console; changes no account |
+| 3 · Consequential | dismantle (freeze), file STR, close case, apply policy, New Bank, retrain | **Console only.** Not in the MCP tool list, and blocked (403) through the public URL |
+
+- **Approval:** the agent's `proposeDismantle` creates `PRP-00x` and shows it on the ring. Only **Review & Approve → Lock N Accounts** in the console executes it; the case history then reads *proposed by Copilot → approved in the console → dismantled*. Proposals are idempotent, and a ring can't be dismantled twice.
+- **Audit trail:** `GET /audit` (console only) lists every agent tool call (tool, arguments, status, ms), proposal, approval, rejection, case action, policy change, retrain and blocked public request. Entries are SHA-256 hash-chained, so editing one is detected (`intact: false`). It is in memory: a restart clears it.
+- **Not done yet (say so if asked):** single role by design: whoever uses the console is the analyst, so approvals are recorded as `analyst (console)`, not as a named person. Named users and roles would come from Entra ID sign-in in a bank deployment. Copilot Studio uses the maker's connection, so the agent doesn't act as the end user. There is no database, so cases and the audit trail are lost on restart.
+
 ## Checks
 
+Not needed to run the app. The classifier in `model/` is already trained.
 ```
-python3 xai.py train          # retrain the classifier → model/ (about 5 s)
+python3 xai.py train          # optional: rebuild the classifier → model/ (about 5 s), then restart the API
 python3 xai.py                # classifier: SHAP sums exact, monotone constraints hold, held-out AUC ≥ 0.9, ≤ 5% ordinary customers flagged
+python3 check_guardrails.py   # guardrails: agent can't dismantle, tunnel blocks consequential routes, MCP key, audit chain tamper-evident (31 checks)
 python3 muletrace.py          # engine: demo history → exactly 3 rings, none on normal accounts; evidence ids exist and ratios recompute; policy toggles work
 cd web && node flow.check.mjs # graph layout: hop columns, ordering, device lane, wait times
 cd web && npm run build       # type-check + production build

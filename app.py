@@ -5,13 +5,15 @@ transactions streams in. Mule attacks are launched on demand (POST /inject/{kind
 send transfers in (POST /ingest). Every tick reruns detection, so alerts and rings appear as the money moves.
 Clients subscribe to GET /stream (server-sent events)."""
 import asyncio
+import hashlib
 import heapq
+import hmac
 import json
 import os
 import random
 import time
 import urllib.request
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -24,8 +26,9 @@ from statistics import median
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
+from starlette.routing import Match
 
 import muletrace as mt
 import relations as rel
@@ -59,6 +62,7 @@ class Live:
         self.sent = (None, "")  # (version, serialised snapshot): every SSE client shares one serialisation
         self.requests = deque()  # injections, transfers and policy changes, applied inside the tick (never mid-detection)
         self.policy = Policy()  # survives New Bank: it's the analyst's setting, not the bank's data
+        self.audit = []  # append-only, hash-chained; survives New Bank too
         self.reset()
 
     def reset(self):
@@ -69,6 +73,7 @@ class Live:
         self.queue, self.attacks, self.autopilot, self.next_auto = [], [], False, 0.0
         self.frozen, self.cases, self.net_status, self.alert_ids, self.net_ids = set(), [], {}, {}, {}
         self.labels = {}  # account id -> True (confirmed mule) / False (not a mule): analyst feedback for retraining
+        self.proposals = {}  # network id -> the agent's dismantle proposal, waiting for an analyst
         self.suspected = rel.SuspectedStore()  # inferred relationships; never part of self.txns
         self.recompute()
 
@@ -153,7 +158,8 @@ class Live:
             "network_id": self.net_of[a["alert_id"]], "status": "frozen" if a["account_id"] in self.frozen else "new"}
 
     def net_view(self, n):
-        return {k: v for k, v in n.items() if k not in ("edges", "devices")} | {"status": self.net_status.get(n["network_id"], "open")}
+        return {k: v for k, v in n.items() if k not in ("edges", "devices")} | {
+            "status": self.net_status.get(n["network_id"], "open"), "proposal": self.proposals.get(n["network_id"])}
 
     def snapshot(self):
         alerted = {a["account_id"] for a in self.alerts}
@@ -250,6 +256,81 @@ def notify(payload):
         return f"failed: {e}"
 
 
+# -- Guardrails: enforced here, in code, never by the agent's prompt ----------------------------------------------
+# Action classes: 1 read-only (any tool), 2 reversible draft or proposal (agent may call), 3 consequential (freeze,
+# file, close, change rules, reset): only from the console, never through /mcp or the public URL.
+# Single-role deployment: whoever uses the console is the analyst (no sign-in or roles in this build).
+CONSOLE = "analyst (console)"
+
+
+def audit(actor, action, target, outcome, **detail):
+    """Append to the hash-chained audit trail: editing or deleting any entry breaks every later hash."""
+    prev = LIVE.audit[-1]["hash"] if LIVE.audit else "0" * 64
+    e = dict(seq=len(LIVE.audit) + 1, at=datetime.now().astimezone().isoformat(timespec="seconds"), bank_clock=LIVE.clock,
+             actor=actor, action=action, target=target, outcome=outcome, detail=detail, prev=prev)
+    e["hash"] = hashlib.sha256(json.dumps(e, default=iso, sort_keys=True).encode()).hexdigest()
+    LIVE.audit.append(e)
+    return e
+
+
+def audit_intact():
+    prev = "0" * 64
+    for e in LIVE.audit:
+        body = {k: v for k, v in e.items() if k != "hash"}
+        if e["prev"] != prev or hashlib.sha256(json.dumps(body, default=iso, sort_keys=True).encode()).hexdigest() != e["hash"]:
+            return False
+        prev = e["hash"]
+    return True
+
+
+def via_public_url(request):
+    """True when the request came through the dev tunnel / public URL (a proxy), not from this laptop or the LAN."""
+    h = request.headers
+    pub = urlparse(os.environ.get("PUBLIC_URL", "")).hostname
+    hosts = {x.split(":")[0] for x in (h.get("host", ""), h.get("x-forwarded-host", "")) if x}
+    return bool(h.get("x-forwarded-for") or h.get("x-forwarded-host") or (pub and pub in hosts)
+                or any(x.endswith(".devtunnels.ms") for x in hosts))
+
+
+def api_routes():
+    """Every route, including those of included routers: newer FastAPI keeps an included router as one wrapper in
+    app.routes (no prefix is used here, so its routes' paths are the real ones)."""
+    for r in app.routes:
+        sub = getattr(r, "original_router", None)
+        yield from (sub.routes if sub else [r])
+
+
+def public_route_allowed(scope):
+    if scope["path"] in ("/mcp", "/copilot/openapi.json") or scope["path"].startswith("/export/"):
+        return True
+    route = next((r for r in api_routes() if r.matches(scope)[0] == Match.FULL), None)
+    return getattr(route, "operation_id", None) in COPILOT_TOOLS
+
+
+class PublicLockdown:
+    """The tunnel is anonymous, so through it only the investigator tools are reachable. Pure ASGI, so the SSE
+    stream passes through untouched. Set PUBLIC_LOCKDOWN=0 only when the dashboard itself is served from the public
+    URL (e.g. App Service) and real sign-in is in place."""
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["method"] != "OPTIONS" and os.environ.get("PUBLIC_LOCKDOWN", "1") != "0" \
+                and via_public_url(Request(scope)) and not public_route_allowed(scope):
+            audit("public URL", "blocked", f"{scope['method']} {scope['path']}", "403")
+            return await JSONResponse({"detail": "Not available through the public URL. Consequential actions run only "
+                                                 "in the MuleTrace console."}, 403)(scope, receive, send)
+        await self.inner(scope, receive, send)
+
+
+app.add_middleware(PublicLockdown)
+
+
+@app.get("/audit", summary="Audit trail: agent tool calls, proposals, approvals, case and policy actions (hash-chained)")
+def audit_trail(limit: int = Query(200, ge=1, le=2000)):
+    return {"intact": audit_intact(), "entries": len(LIVE.audit), "items": LIVE.audit[-limit:][::-1]}
+
+
 @app.get("/stream", summary="Server-sent events: a full snapshot whenever the live state changes")
 async def stream():
     async def events():
@@ -272,6 +353,7 @@ def live(action: Literal["play", "pause", "reset"], speed: int | None = None):
         raise HTTPException(422, f"speed must be one of {', '.join(map(str, SPEEDS))}")
     if action == "reset":
         LIVE.reset()
+        audit(CONSOLE, "new_bank", "live bank", "reset")
     else:
         LIVE.running = action == "play"
     if speed:
@@ -415,7 +497,36 @@ def network(network_id: str):
                                                       sorted({a for a, _ in n["devices"]}))}
 
 
-@app.post("/network/{network_id}/dismantle", operation_id="dismantleRing", summary="Freeze mule and exit accounts (simulated), open a case and trigger the Power Automate playbook. Only call after the analyst confirms.")
+@app.post("/network/{network_id}/propose-dismantle", operation_id="proposeDismantle",
+          summary="Propose dismantling a ring (freezing its mule and exit accounts). Executes nothing: the proposal waits "
+                  "for an analyst to approve or reject it in the MuleTrace console.")
+def propose_dismantle(network_id: str, reason: str = Query("", max_length=300, description="One line: why, quoting tool output")):
+    n = lookup(LIVE.net_by, network_id, "network")
+    if LIVE.net_status.get(network_id) == "dismantled":
+        raise HTTPException(409, f"{network_id} is already dismantled")
+    p = LIVE.proposals.get(network_id)
+    if not p or p["status"] != "pending":  # idempotent: asking twice doesn't stack proposals
+        p = LIVE.proposals[network_id] = dict(
+            proposal_id=f"PRP-{sum(1 for e in LIVE.audit if e['action'] == 'propose_dismantle') + 1:03d}",
+            network_id=network_id, action="dismantle", status="pending", proposed_by="Copilot agent (MCP)",
+            at=LIVE.clock, reason=reason.strip(), lock=len(n["freeze"]), review=len(n["sources"]))
+        audit("Copilot agent (MCP)", "propose_dismantle", network_id, "pending", proposal_id=p["proposal_id"], reason=p["reason"])
+        LIVE.version += 1
+    return p | {"executed": False, "next_step": f"Not executed. An analyst must approve {p['proposal_id']} in the MuleTrace console."}
+
+
+@app.post("/proposal/{network_id}/reject", summary="Analyst rejects the agent's dismantle proposal (console only)")
+def reject_proposal(network_id: str):
+    p = LIVE.proposals.get(network_id)
+    if not p or p["status"] != "pending":
+        raise HTTPException(404, f"No pending proposal for {network_id}")
+    p.update(status="rejected", decided_by=CONSOLE, decided_at=LIVE.clock)
+    audit(CONSOLE, "reject_proposal", network_id, "rejected", proposal_id=p["proposal_id"])
+    LIVE.version += 1
+    return p
+
+
+@app.post("/network/{network_id}/dismantle", operation_id="dismantleRing", summary="Freeze mule and exit accounts (simulated), open a case and trigger the Power Automate playbook. Console only: never exposed to the agent.")
 def dismantle(network_id: str):
     n = lookup(LIVE.net_by, network_id, "network")
     if LIVE.net_status.get(network_id) == "dismantled":
@@ -429,10 +540,18 @@ def dismantle(network_id: str):
                 frozen=n["freeze"], review=n["sources"], summary=detail["explanation"], str_draft=detail["str_draft"],
                 status="open", opened=LIVE.clock, events=[])
     k, r = len(n["freeze"]), len(n["sources"])
+    p = LIVE.proposals.get(network_id)
+    if p and p["status"] == "pending":
+        p.update(status="approved", decided_by=CONSOLE, decided_at=LIVE.clock, case_id=case["case_id"])
+        log(case, f"{p['proposal_id']} proposed by {p['proposed_by']}" + (f": {p['reason']}" if p["reason"] else ""))
+        log(case, f"{p['proposal_id']} approved in the console")
     log(case, f"Ring dismantled: {k} account{'s' * (k != 1)} locked, {r} sent to review")
     LIVE.cases.append(case)
     LIVE.version += 1
-    return {**case, "webhook": notify({**case, "score": n["score"], "total_in": n["total_in"]})}
+    webhook = notify({**case, "score": n["score"], "total_in": n["total_in"]})
+    audit(CONSOLE, "dismantle", network_id, "executed", case_id=case["case_id"], locked=n["freeze"], review=n["sources"],
+          proposal_id=p["proposal_id"] if p else None, webhook=webhook)
+    return {**case, "webhook": webhook}
 
 
 def log(case, text):
@@ -460,6 +579,7 @@ def case_action(case_id: str, action: Literal["file_str", "close"]):
         log(c, "Case closed")
     LIVE.version += 1
     c["webhook"] = notify({k: v for k, v in c.items() if k != "events"})
+    audit(CONSOLE, action, case_id, c["status"], ack=c.get("ack"), webhook=c["webhook"])
     return c
 
 
@@ -470,6 +590,7 @@ def label_account(account_id: str, mule: bool | None = None):
         LIVE.labels.pop(account_id, None)
     else:
         LIVE.labels[account_id] = mule
+    audit(CONSOLE, "label_account", account_id, {True: "mule", False: "not_mule", None: "cleared"}[mule])
     LIVE.version += 1
     return {"account_id": account_id, "label": LIVE.labels.get(account_id), "labels": len(LIVE.labels)}
 
@@ -659,6 +780,7 @@ def replay_policy(p: Policy):
 @app.post("/policy/apply", summary="Switch the live engine to this policy (takes effect on the next tick)")
 async def apply_policy(p: Policy):
     LIVE.requests.append(("policy", p))
+    audit(CONSOLE, "apply_policy", "detection policy", "queued", before=LIVE.policy.model_dump(), after=p.model_dump())
     return {"applied": p}
 
 
@@ -684,9 +806,12 @@ def export_csv(table: Literal["accounts", "transactions", "alerts", "networks"])
     return PlainTextResponse(buf.getvalue(), media_type="text/csv")
 
 
+# What the agent may call: read-only tools (class 1) plus drafts and proposals that change nothing (class 2).
+# Never add a class 3 route here (dismantleRing, case actions, policy apply, reset): this set is also the allow-list
+# for the public URL, so adding one would expose it to the internet.
 COPILOT_TOOLS = {"explainAlert", "explainRing", "traceAlertMoney", "traceRingMoney", "compareAccounts", "draftAlertStr",
-                 "draftRingStr", "getAccount", "listAlerts", "listRings", "replayPolicy", "getPolicy", "getEvaluation", "dismantleRing",
-                 "explainAccountRisk", "getModelCard", "listCases",
+                 "draftRingStr", "getAccount", "listAlerts", "listRings", "replayPolicy", "getPolicy", "getEvaluation",
+                 "proposeDismantle", "explainAccountRisk", "getModelCard", "listCases",
                  "explainRingGaps", "traceReturnPaths", "scoreCloseness", "listSuspectedEdges", "getSuspectedEdge"}
 
 
@@ -695,7 +820,7 @@ def copilot_spec(request: Request):
     """OpenAPI 3.0 spec with only the investigator tools, for Copilot Studio (Add tool → REST API)."""
     spec = get_openapi(title="MuleTrace Investigator", version="1.0.0", openapi_version="3.0.3",
                        description="Evidence-grounded AML investigation tools. Every figure comes with the transaction ids it rests on.",
-                       routes=[r for r in app.routes if getattr(r, "operation_id", None) in COPILOT_TOOLS])
+                       routes=[r for r in api_routes() if getattr(r, "operation_id", None) in COPILOT_TOOLS])
     spec["servers"] = [{"url": os.environ.get("PUBLIC_URL") or str(request.base_url).rstrip("/")}]
     return spec
 
@@ -707,7 +832,7 @@ MCP_TOOLS = {}
 
 def mcp_tools():
     if not MCP_TOOLS:
-        spec = get_openapi(title="MuleTrace", version="1.0.0", routes=[r for r in app.routes if getattr(r, "operation_id", None) in COPILOT_TOOLS])
+        spec = get_openapi(title="MuleTrace", version="1.0.0", routes=[r for r in api_routes() if getattr(r, "operation_id", None) in COPILOT_TOOLS])
         schemas = spec.get("components", {}).get("schemas", {})
         for path, ops in spec["paths"].items():
             for method, op in ops.items():
@@ -723,7 +848,7 @@ def mcp_tools():
                 MCP_TOOLS[op["operationId"]] = dict(method=method.upper(), path=path, params=op.get("parameters", []), body=bool(body), spec=dict(
                     name=op["operationId"], description=" ".join(filter(None, [op.get("summary"), op.get("description")])),
                     inputSchema=dict(type="object", properties=props, required=req),
-                    annotations=dict(readOnlyHint=method == "get", destructiveHint=op["operationId"] == "dismantleRing")))
+                    annotations=dict(readOnlyHint=method == "get" or op["operationId"] == "replayPolicy", destructiveHint=False)))
     return MCP_TOOLS
 
 
@@ -749,8 +874,20 @@ async def asgi_call(method, path, query, body):
     return out["status"], out["body"].decode()
 
 
+def mcp_key_ok(request):
+    """Optional shared key (MCP_KEY): Copilot Studio's MCP wizard → Authentication: API key, header x-api-key."""
+    key = os.environ.get("MCP_KEY")
+    if not key:
+        return True
+    given = request.headers.get("x-api-key") or request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    return hmac.compare_digest(given.encode(), key.encode())
+
+
 @app.post("/mcp", include_in_schema=False)
 async def mcp(request: Request):
+    if not mcp_key_ok(request):
+        audit("unknown caller", "mcp_auth", "/mcp", "401")
+        return JSONResponse({"detail": "Missing or wrong API key"}, 401)
     msg = await request.json()
     method, mid, params = msg.get("method"), msg.get("id"), msg.get("params") or {}
     if mid is None:
@@ -771,9 +908,14 @@ async def mcp(request: Request):
                     path = path.replace("{%s}" % p["name"], quote(str(args[p["name"]]), safe=""))
                 else:
                     query[p["name"]] = args[p["name"]]
+        started = time.perf_counter()
         status, text = await asgi_call(t["method"], path, query, {k: v for k, v in args.items() if k not in names} if t["body"] else None)
+        audit("Copilot agent (MCP)", "tool_call", params["name"], str(status), args=args,
+              ms=round((time.perf_counter() - started) * 1000))
         result = {"content": [{"type": "text", "text": text}], "isError": status >= 400}
     else:
+        if method == "tools/call":  # e.g. an old tool list still offering dismantleRing: refused and recorded
+            audit("Copilot agent (MCP)", "tool_call", str(params.get("name")), "refused: not an agent tool")
         return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"Unknown method or tool: {method} {params.get('name', '')}".strip()}}
     return {"jsonrpc": "2.0", "id": mid, "result": result}
 
@@ -850,6 +992,7 @@ async def retrain():
     ids = list(LIVE.labels)
     rows, y = ai_rows(ids), [int(LIVE.labels[a]) for a in ids]
     MODEL, CARD = await asyncio.to_thread(xai.train, extra=(rows, y), version=CARD.get("version", 1) + 1, save=False)
+    audit(CONSOLE, "retrain_model", "classifier", f"v{CARD['version']}", analyst_labels=len(ids), holdout=CARD["holdout"])
     LIVE.version += 1
     return {"version": CARD["version"], "analyst_labels": len(ids), "holdout": CARD["holdout"],
             "note": "Serving locally. Run foundry/deploy.py to serve this version from Microsoft Foundry." if os.environ.get("FOUNDRY_SCORING_URL") else None}

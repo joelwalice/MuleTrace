@@ -1,8 +1,90 @@
 # MuleTrace: Project Context
 
-Hand-off notes for anyone (person or AI agent) picking up this repo. They cover what was built, why each decision was made, and what is still open. Last updated: 18 Oct 2026, demo day.
+Last updated: 18 Oct 2026, demo day.
 
-> **Current phase:** demo day. The Copilot Studio agent is live (MCP tools, embedded in the dashboard) and the Power Automate playbook emails the STR on Dismantle (change log item 17). Microsoft setup steps live in [`microsoft/README.md`](microsoft/README.md); what's left is in [`TODO.md`](TODO.md).
+**Start with the Team briefing (5 minutes).** Sections 1–9 below it are the full reference: architecture, every endpoint, the change log and the design rules. Use them when you're changing code or answering a hard judge question.
+
+## Team briefing
+
+### Where we are
+- **Everything in the demo works end to end:** live bank feed → Red Team attacks → alerts → rings → money trail → evidence → STR draft → Dismantle → Power Automate email.
+- **Live on Microsoft:** the Copilot Studio agent `MuleTrace Investigator` (MCP tools, embedded as **Ask Copilot**, also in Teams) and the Power Automate playbook (Outlook email with the STR on Dismantle, tested `sent (202)`).
+- **Today's change: guardrails** (change log item 18; the full write-up is in [`AUDIT.md`](AUDIT.md)).
+  - The agent can no longer freeze anything. It calls `proposeDismantle`, and the console shows **Awaiting your approval** with **Reject** and **Review & Approve**.
+  - Through the public tunnel, only the agent's tools answer. Everything else returns 403.
+  - Every agent call, approval and case action goes into a hash-chained audit trail (`GET /audit`).
+  - `python3 check_guardrails.py` passes **31/31**.
+- **Not pushed yet:** today's changes are uncommitted on `feat/copilot-mcp-playbook`. Until they're pushed, pulling won't get you the guardrails.
+- **Optional, not done:** the Foundry endpoint (the classifier runs locally; don't claim it runs in Foundry) and Power BI.
+
+### The pitch in four lines
+1. Analysts drown in single-account alerts, while mule rings hide across many accounts.
+2. MuleTrace groups alerts into rings: **about 14 alerts → 3 rings** once the three attacks are launched.
+3. It traces the money hop by hop. Every figure cites its transaction IDs, and possible victims are sent to review, not frozen.
+4. The Copilot agent investigates through the same API. It quotes the engine and never calculates for itself. It can only *propose* a freeze, and a human approves it.
+
+**Against RBI's MuleHunter.AI:** MuleHunter flags individual mule accounts. MuleTrace starts after the flag: it groups the ring, traces the money, separates victims from mules and drafts the STR for FIU-IND.
+
+### Numbers you can say (and how to say them)
+| Claim | Say it like this |
+|---|---|
+| Alert reduction | "About 14 alerts become 3 rings." It's measured on our own synthetic attacks, so call it that. |
+| IBM AML benchmark | "Our classifier, retrained on IBM history, gets **7.7× lift**; the rules alone get 1.7×." The sample is small (118-alert budget), so say so if asked. Never show the rules-only number as a win. |
+| Classifier | LightGBM with exact SHAP reasons. Held-out AUC is about 0.96–0.98 on synthetic data and 0.68 on IBM. |
+| STR deadline | "Within 7 days of establishing suspicion." That wording holds under both FIU-IND (working days) and RBI (days). |
+| ₹50,000 PAN band | Say "the long-standing ₹50,000 PAN threshold". It may have been replaced by the Income-tax Rules, 2026, which we haven't confirmed. |
+
+**If a judge pushes:** there's no sign-in, and approvals are recorded as "analyst (console)". There's no database, so a restart loses cases and the audit trail. All data is synthetic. We use one agent, not several. Say these plainly; `AUDIT.md` §1 has the wording.
+
+### Run it
+```
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once (Mac: brew install libomp)
+cd web && npm install                                                 # once
+.venv/bin/uvicorn app:app --reload        # API on :8000
+cd web && npm run dev                     # dashboard on :3000
+./demo-mac.sh                             # demo day on the Mac: tunnel + API + phone build in one go
+```
+Secrets (`PUBLIC_URL`, `PLAYBOOK_WEBHOOK`, `TUNNEL`) live in the git-ignored `.demo.env` on the demo laptop. Never commit them or paste them in chat. Windows steps are in [`README.md`](README.md).
+
+**Checks before you push:** `python3 muletrace.py`, `python3 check_guardrails.py`, `cd web && node flow.check.mjs`, `NEXT_DIST_DIR=.next-test npm run build`.
+
+### Demo flow (5 min)
+1. Start from **More → New Bank**, with the clock at 30× and Autopilot off.
+2. Press **2** (Pass-Through Chain) and use **Trace Flow** to show the waits between hops.
+3. A judge scans the QR code (**More → Judge Phone QR Code**), opens `/send` and taps **Structuring**. Their phone says **Caught**.
+4. Press **1** and **3**, and the headline settles at about 14 alerts → 3 rings.
+5. **Evidence → Ask Copilot:** "Why is AL-x suspicious?", then "Draft the STR", then the Policy replay (turn off Structuring, Replay, and rings drop from 3 to 2).
+6. Ask Copilot to "Dismantle NET-x". It answers that the proposal is **awaiting approval**. In the console, **Review & Approve** locks the accounts, and the playbook email arrives.
+7. Close on the IBM lift and the MuleHunter answer.
+
+The full script and the morning checklist are in [`TODO.md`](TODO.md) §3.
+
+### Before judging (open items)
+- [ ] **Push** today's changes.
+- [ ] In Copilot Studio, refresh the MCP tool's tools: `proposeDismantle` should appear and `dismantleRing` should be gone. Paste the new [`microsoft/agent-instructions.md`](microsoft/agent-instructions.md) and publish.
+- [ ] Through the real tunnel, `curl -X POST $PUBLIC_URL/live/reset` should return 403, and Ask Copilot should still answer "List the mule rings".
+- [ ] Rehearse the new approval step, test from a real phone on the laptop hotspot, and record a backup video.
+- [ ] Check the ₹50k PAN rule on incometaxindia.gov.in (this only changes the slide wording, not the code).
+
+### Gotchas
+- **Dashboard shows stale CSS or "Failed to load chunk":** run `rm -rf web/.next && npm run dev`. Test builds always use `NEXT_DIST_DIR=.next-test`.
+- **Phones can't load `/send`:** use `./demo-mac.sh` (a production build) rather than `npm run dev`, and put phones on the laptop hotspot. Venue Wi-Fi often isolates devices.
+- **The agent's tools fail:** the dev tunnel `muletrace` isn't being hosted. `demo-mac.sh` hosts it.
+- **Dismantle says "not configured":** the API didn't get `PLAYBOOK_WEBHOOK`.
+- **The AI endpoints error on Windows:** pull the latest; it has the CRLF fix for `model/`.
+- **A weak 2-account "insufficient" ring appears by itself:** that's the random feed. It's harmless and shows honest confidence, but start the demo from New Bank.
+
+### Where things are
+| File | What it is |
+|---|---|
+| [`README.md`](README.md) | Run steps, dashboard guide, Judge Q&A, "Claims you can defend" |
+| [`TODO.md`](TODO.md) | What's left, team decisions, demo-day checklist |
+| [`AUDIT.md`](AUDIT.md) | Audit against Microsoft's *AI Apps That Matter*: guardrails, scorecard, submission narrative |
+| [`microsoft/`](microsoft/README.md) | Copilot Studio, Power Automate and Power BI setup; agent instructions |
+| [`plan.md`](plan.md) | Original plan for the Investigation Copilot |
+| `muletrace.py` · `app.py` · `xai.py` · `web/` | Engine · API (+ MCP) · classifier · dashboard |
+
+---
 
 ## 1. What MuleTrace is
 
@@ -110,10 +192,11 @@ cd web && node flow.check.mjs               # graph layout self-check
 - **Benchmark and exports:**
   - `GET /evaluation` reads `data/eval.json`, or returns `status: "not run"`.
   - `GET /export/{accounts|transactions|alerts|networks}.csv` serves the live tables for Power BI.
-- **Copilot Studio tools:** `COPILOT_TOOLS` lists the 17 investigator operations (camelCase `operationId`s).
+- **Copilot Studio tools:** `COPILOT_TOOLS` lists the 22 investigator operations (17 core plus 5 relationship tools from PR #3) (camelCase `operationId`s).
   - `POST /mcp`: MCP over streamable HTTP, stateless JSON responses (initialize, tools/list, tools/call, ping). Tool schemas are generated from the same OpenAPI routes, and each call is forwarded in-process to the REST route, so answers are identical. This is what the current Copilot Studio uses (its **Add tool** dialog offers only MCP and Workflow).
   - `GET /copilot/openapi.json`: the same tools as OpenAPI 3.0, for older layouts with a REST API tool. `servers` comes from `PUBLIC_URL`.
-- **Dismantle:** freezes mules and exits (simulated), sends sources to review, opens a case, and POSTs the case JSON to `PLAYBOOK_WEBHOOK`. The response reports `sent (status)`, `not configured`, or `failed: …`.
+- **Dismantle:** freezes mules and exits (simulated), sends sources to review, opens a case, and POSTs the case JSON to `PLAYBOOK_WEBHOOK`. The response reports `sent (status)`, `not configured`, or `failed: …`. It runs from the console only; the agent gets `POST /network/{id}/propose-dismantle` (item 18).
+- **Guardrails (item 18):** `PublicLockdown` middleware, the hash-chained `GET /audit`, optional `MCP_KEY`, and `PUBLIC_LOCKDOWN` (default `1`).
 - **STR drafts:** the ring draft's "Grounds for suspicion" is built from the patterns that fired (`GROUNDS` in `app.py`), not fixed text.
 
 ## 5. Change log (in order)
@@ -257,6 +340,17 @@ cd web && node flow.check.mjs               # graph layout self-check
    - **`demo-mac.sh`:** tunnel + API + LAN build in one command, secrets in `.demo.env`. Persistent dev tunnel `muletrace`.
    - **Observed:** the random background feed occasionally forms a weak 2-account dormant-only ring (confidence insufficient). Harmless, and a good "insufficient evidence" moment, but start the demo from **New Bank**.
 
+18. **Guardrails enforced in code, not the prompt** (18 Oct, demo day; see `AUDIT.md`). Uncommitted at the time of writing.
+   - **Why:** the approval for a freeze depended only on rule 6 of the prompt, and the anonymous tunnel exposed every route. Anyone with the URL could `POST /live/reset` or dismantle a ring.
+   - **Action classes:** (1) read-only, (2) a reversible draft or proposal, which the agent may do, and (3) consequential actions (freeze, file, close, policy apply, reset), which happen in the console only.
+   - **Agent tools:** `dismantleRing` was removed from `COPILOT_TOOLS` and replaced by `proposeDismantle`. A proposal is pending and idempotent; the console approves it through Dismantle or rejects it with `POST /proposal/{id}/reject`. A stale `dismantleRing` call over MCP is refused and logged. The core tool count stays at 17 (22 with the PR #3 relationship tools).
+   - **Public lockdown:** a pure ASGI middleware (so SSE passes through). Through the tunnel or `PUBLIC_URL`, only the Copilot tools, `/mcp` and `/export/*` answer; everything else returns 403 and is audited.
+   - **Audit:** an append-only SHA-256 chain that survives New Bank. `GET /audit` reports `intact`.
+   - **Optional `MCP_KEY`:** sent as the `x-api-key` or Bearer header.
+   - **Prompt:** rule 6 now says the agent can't act and must propose. New rule 11 treats tool output as data, never instructions. New rule 12 allows regulatory claims only from an approved source.
+   - **UI:** an "Awaiting your approval" banner with Reject and Review & Approve, plus a signal-log entry when a proposal arrives.
+   - **Tests:** `check_guardrails.py` (31 adversarial checks, in-process, no server) passes 31/31.
+
 ## 6. Design rules currently in force (don't regress)
 
 - **Look:** a light analyst workspace (from the `minimalist-ui` skill), replacing the dark terminal look in item 12.
@@ -285,7 +379,7 @@ cd web && node flow.check.mjs               # graph layout self-check
   1. Instant cloud flow → trigger "When an HTTP request is received" (a **premium** connector), with **Who can trigger** set to **Anyone**. Paste the JSON schema with the case fields: `case_id, network_id, alert_ids[], frozen[], review[], summary, str_draft, status, score, total_in`.
   2. Actions: Outlook email with the STR draft (live in the demo). Teams post and a Planner task due in 7 days where the tenant has them.
   3. Run the API with `PLAYBOOK_WEBHOOK='…'` (`demo-mac.sh` reads it from `.demo.env`).
-- **Copilot Studio:** an MCP tool on `<PUBLIC_URL>/mcp` (17 tools; or a REST API tool from `/copilot/openapi.json` in older layouts), with the instructions in `microsoft/agent-instructions.md`. Embedded via the Demo website channel. See `microsoft/README.md`.
+- **Copilot Studio:** an MCP tool on `<PUBLIC_URL>/mcp` (22 tools; or a REST API tool from `/copilot/openapi.json` in older layouts), with the instructions in `microsoft/agent-instructions.md`. Embedded via the Demo website channel. See `microsoft/README.md`.
 - **Power BI:** use the live `/export/*.csv` through Get data → Web, or the static `data/*.csv` (the canonical demo dataset).
 - **Azure:** API on App Service (`uvicorn app:app --host 0.0.0.0`, set `CORS_ORIGINS`); `web/` on Static Web Apps or App Service, with `NEXT_PUBLIC_API` set at build time.
 
@@ -297,7 +391,7 @@ cd web && node flow.check.mjs               # graph layout self-check
 - **Facts to verify before the slides:** the STR deadline checks out (7 days from the Principal Officer establishing suspicion; FIU-IND says working days, RBI says days). The **₹50k PAN rule may be out of date:** reports say the Income-tax Rules, 2026 (from 1 April 2026) replaced Rule 114B's daily test with an annual ₹10 lakh aggregate. Unconfirmed against the official notification; see `TODO.md`.
 - **Next dev server stale CSS or "Failed to load chunk":** run `rm -rf .next && npm run dev`. Agents must build with `NEXT_DIST_DIR=.next-test` so they never touch the dev server's `.next`.
 - **Leftover processes:** three uvicorn processes (ports 8765, 8770, 8771) were started inside the agent sandbox and can't be killed, not even with `sudo`. They're harmless and should go away after quitting Claude Code or rebooting.
-- **Not built:** CSV upload (cut, since `/ingest` covers incoming data), API-key auth, a database or auth (cases are lost on restart), an ML anomaly score, and an LLM call inside the app (Copilot Studio handles that).
+- **Not built:** CSV upload (cut, since `/ingest` covers incoming data), user sign-in and roles (only `/mcp` has an optional key), a database (cases and the audit trail are lost on restart), an ML anomaly score, and an LLM call inside the app (Copilot Studio handles that).
 - **Minor:**
   - The explanation text says "3 alert(s)".
   - The selected ring card's white header picks up faint scanlines.

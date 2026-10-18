@@ -47,10 +47,10 @@ Check: open `https://<id>-8000…/copilot/openapi.json`. Its `servers` entry sho
    - **Model:** Claude Opus 5.5 was tested. Its reasoning shows as a collapsed "Thought for N seconds" panel, separate from the answer.
 2. **Ground it:** under **Knowledge**, remove **Search all websites**. In older layouts: **Settings → Generative AI**, orchestration **Generative**, and turn off **Use general knowledge** and **Web search**. The agent then answers only from the tools.
 3. **Add the tools.** The newer Copilot Studio layout only offers **MCP** and **Workflow** under **Tools → + → Add**, so use the API's MCP endpoint:
-   - **+ Add → Model Context Protocol (MCP)**. Server URL `$PUBLIC_URL/mcp`, Authentication **None** → **Create** → create the connection → **Add**.
-   - All 17 tools appear (`explainAlert`, `traceRingMoney`, …), with names and descriptions from the API. `/mcp` forwards each call to the REST route, so answers match the dashboard.
+   - **+ Add → Model Context Protocol (MCP)**. Server URL `$PUBLIC_URL/mcp`, Authentication **None** → **Create** → create the connection → **Add**. (Optional hardening: set `MCP_KEY` on the API and choose **API key**, header `x-api-key`, instead of None. Test it before the demo, since it changes the connection.)
+   - All 22 tools appear (`explainAlert`, `traceRingMoney`, …), with names and descriptions from the API. `/mcp` forwards each call to the REST route, so answers match the dashboard.
    - Open the tool (**Edit tool**) and set **Authentication** to the maker's account instead of **End user account**. Otherwise the embedded chat shows "Connection Required" to every viewer.
-   - MCP has no per-tool "ask before running" switch. Rule 6 in `agent-instructions.md` enforces the approval (tested: a repeated request doesn't count as a yes).
+   - The agent has no tool that freezes accounts: `dismantleRing` isn't offered over MCP, only `proposeDismantle`, which waits for an analyst in the console. The API enforces this (`python3 check_guardrails.py`), so it doesn't rely on the prompt. **After updating the API, open the MCP tool in Copilot Studio and refresh its tools** so `proposeDismantle` appears and `dismantleRing` disappears (a stale `dismantleRing` call is refused anyway).
    - Older layouts with **New tool → REST API** can still upload `$PUBLIC_URL/copilot/openapi.json` instead.
    - **Lab tenants:** if Copilot Studio says Dataverse isn't set up, add Dataverse to the environment in the Power Platform admin center, and give your user the **System Administrator** role there.
 4. **Test** in the test pane, after launching the 3 attacks on the dashboard:
@@ -58,7 +58,7 @@ Check: open `https://<id>-8000…/copilot/openapi.json`. Its `servers` entry sho
    - "Why are AC0509 and AC0510 connected?"
    - "What if pass-through is 60%?" should report the replay, with no live change.
    - "Draft the STR for NET-1" should return the draft plus the missing checklist items.
-   - "Dismantle NET-1" should ask first, then call the tool. The Power Automate flow fires.
+   - "Dismantle NET-1" should call `proposeDismantle` and say the proposal is waiting for approval. The console shows **Awaiting your approval**; **Review & Approve** locks the accounts and the Power Automate flow fires.
 5. **Publish:** **Settings → Security → Authentication → No authentication**, then **Publish → Add channel → Demo website** (it's greyed out until authentication is off) → **Publish agent**. The web embed needs no sign-in.
 6. **Embed it in the dashboard:**
    - Go to the **Demo website** channel → **Embed** and copy the `src` of the iframe code.

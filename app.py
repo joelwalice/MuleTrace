@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import heapq
 import hmac
+import html
 import json
 import os
 import random
@@ -243,6 +244,42 @@ def graph(edges, devices, role):
             "edges": [dict(id=e["txn_id"], source=e["sender_account"], target=e["receiver_account"], amount=e["amount"],
                            ts=e["ts"], kind="money") for e in edges]
                      + [dict(id=f"{a}-{d}", source=a, target=d, kind="shared_device") for a, d in devices]}
+
+
+def eradication_email(case, n, p):
+    """(subject, HTML) for the Power Automate playbook. Tables and inline styles only: Outlook ignores <style> and flexbox."""
+    esc, k = html.escape, len(case["frozen"])
+    name = lambda a: esc(LIVE.accounts.get(a, {}).get("name", ""))  # noqa: E731
+    chips = lambda ids, bg, fg: "".join(  # noqa: E731
+        f'<span style="display:inline-block;margin:0 6px 6px 0;padding:4px 10px;border-radius:6px;background:{bg};color:{fg};'
+        f'font:600 13px Consolas,monospace">{esc(a)}<span style="font:400 12px Segoe UI,Arial;color:#66655f"> {name(a)}</span></span>'
+        for a in ids) or '<span style="color:#66655f">None</span>'
+    row = lambda label, value: (f'<tr><td style="padding:6px 0;color:#66655f;width:150px">{label}</td>'  # noqa: E731
+                                f'<td style="padding:6px 0;color:#1f2328;font-weight:600">{value}</td></tr>')
+    via = (f'{esc(p["proposal_id"])} proposed by the Copilot agent, approved by the analyst in the MuleTrace console' if p and p.get("case_id") == case["case_id"]
+           else "Dismantled by the analyst in the console")
+    link = f"{os.environ.get('DASHBOARD_URL', 'http://localhost:3000').rstrip('/')}/?ring={quote(case['network_id'])}"
+    subject = f"Mule ring {case['network_id']} eradicated · {k} account{'s' * (k != 1)} locked · {case['case_id']}"
+    body = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f2ee;padding:24px 0;font-family:Segoe UI,Arial,sans-serif">
+<tr><td align="center"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e4e2dc;border-radius:12px;overflow:hidden">
+<tr><td style="background:#1f2328;padding:18px 28px;color:#f3f2ee;font:800 18px Arial Black,Arial,sans-serif;letter-spacing:1px">MULETRACE
+<span style="float:right;font:600 12px Consolas,monospace;letter-spacing:1px;color:#f0b4a8">AML · FIU-IND</span></td></tr>
+<tr><td style="padding:28px 28px 8px"><span style="display:inline-block;padding:5px 12px;border-radius:999px;background:#e6f4ea;color:#1a7f37;font:700 12px Consolas,monospace;letter-spacing:1px">&#10003; RING ERADICATED</span>
+<h1 style="margin:14px 0 6px;font:800 26px Arial Black,Arial,sans-serif;color:#1f2328">{esc(case['network_id'])} is dismantled</h1>
+<p style="margin:0;color:#464b50;font-size:15px;line-height:1.5">{k} mule and exit account{'s are' if k != 1 else ' is'} locked (simulated) and {esc(case['case_id'])} is open. {inr(n['total_in'])} had entered the ring; the trail and grounds are in the STR draft below.</p></td></tr>
+<tr><td style="padding:16px 28px"><table role="presentation" width="100%" style="font-size:14px;border-top:1px solid #e4e2dc;border-bottom:1px solid #e4e2dc">
+{row("Case", esc(case['case_id']))}{row("Risk score", f"{n['score']:.2f}")}{row("Money in", inr(n['total_in']))}
+{row("Alerts", esc(", ".join(case['alert_ids'])))}{row("Decision", via)}</table></td></tr>
+<tr><td style="padding:8px 28px"><p style="margin:0 0 8px;font:700 12px Consolas,monospace;letter-spacing:1px;color:#b42318">LOCKED</p>{chips(case['frozen'], '#fdebec', '#b42318')}
+<p style="margin:12px 0 8px;font:700 12px Consolas,monospace;letter-spacing:1px;color:#8a6100">SENT TO REVIEW, NOT LOCKED (MAY BE VICTIMS)</p>{chips(case['review'], '#fdf3dc', '#8a6100')}</td></tr>
+<tr><td style="padding:16px 28px"><p style="margin:0 0 8px;font:700 12px Consolas,monospace;letter-spacing:1px;color:#1f2328">NEXT STEPS</p>
+<ol style="margin:0;padding-left:20px;color:#464b50;font-size:14px;line-height:1.7"><li>Principal Officer reviews the STR draft below.</li><li>File the STR with FIU-IND within 7 days of establishing suspicion.</li><li>Collect beneficial-owner and source-of-funds records for the review accounts.</li></ol></td></tr>
+<tr><td style="padding:8px 28px 16px"><a href="{esc(link)}" style="display:inline-block;padding:11px 20px;border-radius:8px;background:#1f2328;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px">Open the case in MuleTrace</a></td></tr>
+<tr><td style="padding:8px 28px 28px"><p style="margin:0 0 8px;font:700 12px Consolas,monospace;letter-spacing:1px;color:#1f2328">STR DRAFT · NEEDS PRINCIPAL OFFICER REVIEW</p>
+<pre style="margin:0;white-space:pre-wrap;background:#f3f2ee;border-radius:8px;padding:14px;font:12px/1.5 Consolas,monospace;color:#1f2328">{esc(case['str_draft'])}</pre></td></tr>
+<tr><td style="padding:14px 28px;background:#f3f2ee;color:#66655f;font-size:12px">Sent by the MuleTrace playbook through Power Automate. Demo data; account locks are simulated.</td></tr>
+</table></td></tr></table>"""
+    return subject, body
 
 
 def notify(payload):
@@ -512,7 +549,9 @@ def propose_dismantle(network_id: str, reason: str = Query("", max_length=300, d
             at=LIVE.clock, reason=reason.strip(), lock=len(n["freeze"]), review=len(n["sources"]))
         audit("Copilot agent (MCP)", "propose_dismantle", network_id, "pending", proposal_id=p["proposal_id"], reason=p["reason"])
         LIVE.version += 1
-    return p | {"executed": False, "next_step": f"Not executed. An analyst must approve {p['proposal_id']} in the MuleTrace console."}
+    link = f"{os.environ.get('DASHBOARD_URL', 'http://localhost:3000').rstrip('/')}/?ring={network_id}"
+    return p | {"executed": False, "approve_link": link,
+                "next_step": f"Not executed. An analyst must approve {p['proposal_id']} in the MuleTrace console: {link}"}
 
 
 @app.post("/proposal/{network_id}/reject", summary="Analyst rejects the agent's dismantle proposal (console only)")
@@ -548,7 +587,8 @@ def dismantle(network_id: str):
     log(case, f"Ring dismantled: {k} account{'s' * (k != 1)} locked, {r} sent to review")
     LIVE.cases.append(case)
     LIVE.version += 1
-    webhook = notify({**case, "score": n["score"], "total_in": n["total_in"]})
+    subject, body = eradication_email(case, n, p)
+    webhook = notify({**case, "score": n["score"], "total_in": n["total_in"], "email_subject": subject, "email_html": body})
     audit(CONSOLE, "dismantle", network_id, "executed", case_id=case["case_id"], locked=n["freeze"], review=n["sources"],
           proposal_id=p["proposal_id"] if p else None, webhook=webhook)
     return {**case, "webhook": webhook}
@@ -577,9 +617,8 @@ def case_action(case_id: str, action: Literal["file_str", "close"]):
             raise HTTPException(409, f"{case_id} is already closed")
         c["status"] = "closed"
         log(c, "Case closed")
-    LIVE.version += 1
-    c["webhook"] = notify({k: v for k, v in c.items() if k != "events"})
-    audit(CONSOLE, action, case_id, c["status"], ack=c.get("ack"), webhook=c["webhook"])
+    LIVE.version += 1  # no playbook call here: the email says "ring eradicated" and belongs to dismantle only
+    audit(CONSOLE, action, case_id, c["status"], ack=c.get("ack"))
     return c
 
 

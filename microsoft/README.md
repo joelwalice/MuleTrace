@@ -28,6 +28,8 @@ devtunnel create muletrace --allow-anonymous      # persistent: the URL survives
 devtunnel port create muletrace -p 8000
 devtunnel host muletrace                          # prints https://<id>-8000.<region>.devtunnels.ms
 ```
+**One host per tunnel.** If another machine runs `devtunnel host` on the same tunnel, it takes over (`.devtunnel.log` says "Another host for the tunnel has connected") and Copilot Studio gets 404s or timeouts. Give each laptop its own tunnel (e.g. `muletrace-mac`) and point the custom connector's **Host** at its URL (Power Automate → **Custom connectors** → MuleTrace → **Edit** → Host → **Update connector**).
+
 Restart the API with the tunnel URL. Keep the tunnel running during the demo (`demo-mac.sh` hosts it for you when `TUNNEL=muletrace` is in `.demo.env`).
 ```
 PUBLIC_URL=https://<id>-8000.<region>.devtunnels.ms .venv/bin/uvicorn app:app --reload
@@ -50,7 +52,7 @@ Check: open `https://<id>-8000…/copilot/openapi.json`. Its `servers` entry sho
    - **+ Add → Model Context Protocol (MCP)**. Server URL `$PUBLIC_URL/mcp`, Authentication **None** → **Create** → create the connection → **Add**. (Optional hardening: set `MCP_KEY` on the API and choose **API key**, header `x-api-key`, instead of None. Test it before the demo, since it changes the connection.)
    - All 22 tools appear (`explainAlert`, `traceRingMoney`, …), with names and descriptions from the API. `/mcp` forwards each call to the REST route, so answers match the dashboard.
    - Open the tool (**Edit tool**) and set **Authentication** to the maker's account instead of **End user account**. Otherwise the embedded chat shows "Connection Required" to every viewer.
-   - The agent has no tool that freezes accounts: `dismantleRing` isn't offered over MCP, only `proposeDismantle`, which waits for an analyst in the console. The API enforces this (`python3 check_guardrails.py`), so it doesn't rely on the prompt. **After updating the API, open the MCP tool in Copilot Studio and refresh its tools** so `proposeDismantle` appears and `dismantleRing` disappears (a stale `dismantleRing` call is refused anyway).
+   - The agent has no tool that freezes accounts: `dismantleRing` isn't offered over MCP, only `proposeDismantle`, which waits for an analyst in the console. The API enforces this (`python3 check_guardrails.py`), so it doesn't rely on the prompt. **After updating the API, open the MCP tool in Copilot Studio and refresh its tools** so `proposeDismantle` appears and `dismantleRing` disappears (a stale `dismantleRing` call is refused anyway). Copilot Studio caches the tool list, so after refreshing it click **Done**, then **Publish** again; until then the running agent keeps the old tools.
    - Older layouts with **New tool → REST API** can still upload `$PUBLIC_URL/copilot/openapi.json` instead.
    - **Lab tenants:** if Copilot Studio says Dataverse isn't set up, add Dataverse to the environment in the Power Platform admin center, and give your user the **System Administrator** role there.
 4. **Test** in the test pane, after launching the 3 attacks on the dashboard:

@@ -147,6 +147,6 @@ export const RISK_BANDS = ["< 0.40", "0.40–0.69", "0.70–0.84", "≥ 0.85"];
 export const riskBand = (r: number) => (r >= 0.85 ? 3 : r >= 0.7 ? 2 : r >= 0.4 ? 1 : 0);
 export const SEV_LABEL: Record<Sev, string> = { high: "High", medium: "Medium", low: "Low" };
 export const playbookNote = (webhook: string) =>
-  webhook.startsWith("sent") ? "Teams and Planner notified through Power Automate."
-  : webhook.startsWith("not configured") ? "Power Automate isn’t connected yet. Set PLAYBOOK_WEBHOOK on the API to send Teams alerts."
+  webhook.startsWith("sent") ? "Eradication email sent through Power Automate."
+  : webhook.startsWith("not configured") ? "Power Automate isn’t connected yet. Set PLAYBOOK_WEBHOOK on the API to send the email."
   : `Power Automate call failed: ${webhook.replace(/^failed: /, "")}`;

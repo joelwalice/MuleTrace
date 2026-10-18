@@ -87,6 +87,7 @@ async def main():
     again = json.loads(r2["result"]["content"][0]["text"])
     check("proposeDismantle executes nothing", body["executed"] is False and not A.LIVE.frozen and A.LIVE.net_status.get(ring) is None)
     check("A repeated proposal is idempotent", again["proposal_id"] == body["proposal_id"])
+    check("The proposal carries a one-click link to the console", body["approve_link"].endswith(f"/?ring={ring}"))
     check("The ring shows the pending proposal to the console", A.LIVE.net_view(n)["proposal"]["status"] == "pending")
 
     # 4. Prompt-injection-style input: oversized reason is rejected by the schema, not trusted

@@ -491,7 +491,7 @@ function Bench({ e }: { e: Extract<Evaluation, { status: "ok" }> }) {
       <div className="tl text-muted">Accuracy · IBM Data</div>
       <output className="macro mt-1.5 block text-[clamp(2.25rem,3.4vw,3.25rem)] text-ink">{a ? a.lift_ai : e.lift}<span className="text-[0.6em]">×</span></output>
       <p className="mt-1.5 truncate font-sans text-[13px] text-ink-2">
-        {a ? `Better than chance · AI retrained on IBM history · rules alone ${a.lift_rules}×`
+        {a ? `Better than chance · rules alone ${a.lift_rules}×`
           : `Better than chance · precision ${e.precision.toFixed(2)}, recall ${e.recall.toFixed(2)}`}
       </p>
     </div>
@@ -788,12 +788,16 @@ function CasePanel({ detail: d, kind, busy, pending, dismantle, reject, str, set
         </div>
       </div>
       {kind === "network" && d.proposal?.status === "pending" && !confirm && (
-        <div className="mx-4 mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-red px-3 py-2.5" role="status">
-          <p className="tl min-w-0 flex-1 text-ink">
-            <span className="font-semibold text-red">{d.proposal.proposal_id} · Awaiting your approval · </span>
-            {d.proposal.proposed_by} proposes locking {d.proposal.lock} accounts at {clock(d.proposal.at)}
-            {d.proposal.reason ? <>: “{d.proposal.reason}”</> : "."} The agent can’t execute this itself.
-          </p>
+        <div className="mx-4 mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-red bg-panel px-4 py-3 shadow-sm" role="status">
+          <div className="min-w-0 flex-1">
+            <p className="tl text-red"><span className="font-semibold">{d.proposal.proposal_id} · Awaiting your approval</span>
+              <span className="text-muted"> · from the Copilot agent at {clock(d.proposal.at)}</span></p>
+            <p className="mt-1 font-sans text-[15px] font-semibold text-ink">
+              Lock {d.freeze?.length} mule & exit accounts{sources ? `, send ${sources} source account${sources === 1 ? "" : "s"} to review` : ""}.
+            </p>
+            {d.proposal.reason && <p className="mt-1 border-l-2 border-line pl-2 font-sans text-sm italic text-ink-2">“{d.proposal.reason}”</p>}
+            <p className="mt-1 font-sans text-xs text-muted">The agent can’t lock anything itself. Only you can.</p>
+          </div>
           <div className="flex gap-1.5">
             <button onClick={() => reject(id)} className={`${btn} bg-bg text-ink-2 hover:text-ink`}>Reject</button>
             <button onClick={() => setConfirm(true)} className={`${btn} border-red bg-panel font-semibold text-red hover:bg-red-soft`}>Review & Approve</button>
@@ -804,9 +808,12 @@ function CasePanel({ detail: d, kind, busy, pending, dismantle, reject, str, set
         <div className="mx-4 mt-3 overflow-hidden rounded-lg border border-red bg-red-soft" role="alertdialog" aria-label={`Confirm dismantling ${id}`}>
 
           <div className="flex flex-wrap items-center gap-3 px-3 py-2.5">
-            <p className="tl min-w-0 flex-1 text-ink">
-              <span className="font-semibold text-red">Confirm · </span>Locks {d.freeze?.length} mule & exit accounts. {sources === 1 ? "1 source account goes" : `${sources} source accounts go`} to review, since they may be victims.
-            </p>
+            <div className="min-w-0 flex-1">
+              <p className="tl font-semibold text-red">Confirm dismantle</p>
+              <p className="mt-1 font-sans text-[15px] text-ink">
+                <b>{d.freeze?.length} mule & exit accounts</b> get locked. {sources === 1 ? "1 source account goes" : `${sources} source accounts go`} to review, since they may be victims. The team gets the eradication email.
+              </p>
+            </div>
             <div className="flex gap-1.5">
               <button onClick={() => setConfirm(false)} className={`${btn} bg-bg text-ink-2 hover:text-ink`}>Cancel</button>
               <button disabled={busy} onClick={() => dismantle(id)} className={`${btn} border-red bg-red font-semibold text-panel hover:opacity-90 disabled:opacity-50`}>

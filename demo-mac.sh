@@ -4,7 +4,7 @@
 # Secrets live in .demo.env (git-ignored), one KEY=value per line:
 #   PUBLIC_URL=https://<id>-8000.<region>.devtunnels.ms     # Copilot Studio calls the API here (/mcp)
 #   PLAYBOOK_WEBHOOK=https://…                              # Power Automate trigger URL; it contains a key
-#   TUNNEL=muletrace                                        # optional: the persistent dev tunnel to host
+#   TUNNEL=muletrace-mac                                    # optional: this laptop's own dev tunnel (one host per tunnel)
 #   FOUNDRY_SCORING_URL=… FOUNDRY_KEY=…                     # optional
 # The Copilot URL is baked into the dashboard from web/.env.local (NEXT_PUBLIC_COPILOT_URL), so rebuild after changing it.
 # Uses the production build: the Next dev server blocks its own scripts for hosts other than localhost.
@@ -23,7 +23,7 @@ done
 
 if [ -f "$root/.demo.env" ]; then set -a; . "$root/.demo.env"; set +a; fi
 [ -n "${PLAYBOOK_WEBHOOK:-}" ] || echo "Note: PLAYBOOK_WEBHOOK not set; Dismantle won't call Power Automate."
-export NEXT_PUBLIC_API="http://$ip:8000" CORS_ORIGINS="http://$ip:3000,http://localhost:3000"
+export NEXT_PUBLIC_API="http://$ip:8000" CORS_ORIGINS="http://$ip:3000,http://localhost:3000" DASHBOARD_URL="http://$ip:3000"
 
 if lsof -tiTCP:8000 -sTCP:LISTEN >/dev/null || lsof -tiTCP:3000 -sTCP:LISTEN >/dev/null; then
   echo "Port 8000 or 3000 is already in use. Stop the running API/dashboard first."; exit 1

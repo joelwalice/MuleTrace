@@ -337,7 +337,16 @@ cd web && node flow.check.mjs               # graph layout self-check
      - The "I should…" text seen in testing is the model's collapsed thinking panel, not the answer; the instructions also forbid narrating.
    - **Power Automate:** HTTP trigger → Outlook **Send an email (V2)** with an HTML body (case, frozen and review accounts, STR draft in a `<pre>`). The lab user had no Teams. Tested: `sent (202)` → email received. HTML must be pasted after switching the body to `</>`, or the tags arrive as text.
    - **STR grounds fix:** the ring STR always said "rapid pass-through, sub-threshold deposits and shared devices". The agent itself flagged this on a dormant-only ring. It now lists only the patterns that fired.
-   - **`demo-mac.sh`:** tunnel + API + LAN build in one command, secrets in `.demo.env`. Persistent dev tunnel `muletrace`.
+   - **`demo-mac.sh`:** tunnel + API + LAN build in one command, secrets in `.demo.env`. This Mac's own dev tunnel is `muletrace-mac` (`https://rj2pcsz0-8000.inc1.devtunnels.ms`); both MuleTrace custom connectors point at it.
+     - Why not the shared `muletrace` tunnel: another machine kept hosting it, which kicked this Mac off and gave Copilot Studio 404s and timeouts. One host per tunnel.
+     - Copilot Studio caches the MCP tool list: after the API's tools change, refresh the tool, click **Done** and **Publish** again, or the agent keeps stale tools (it still offered `dismantleRing` until republished).
+     - **Model switched to Claude Sonnet 5.5** (was Opus 5.5) because answers were slow. Tool calls take about 0.4 s through the tunnel, so the wait was the model's thinking across 2–3 tool rounds; answer quality was unchanged in testing.
+     - **Playbook email:** subject now starts "Mule ring eradicated | STR due in 7 days: ring …" and the body opens with a green "Mule ring eradicated" line. It fires on every dismantle, including **Review & Approve** of an agent proposal. `PLAYBOOK_WEBHOOK` lives in `.demo.env`.
+     - **One-click approve link:** `proposeDismantle` returns `approve_link` (`$DASHBOARD_URL/?ring=NET-x`, set by `demo-mac.sh`/`demo-lan.ps1`), and rule 6 makes the agent end with "Open PRP-xxx to approve". Approval stays in the console on purpose: an in-chat approve tool was considered and dropped, because MCP can't prove a human said yes and the tunnel is anonymous.
+     - **Designed eradication email:** the API builds it (`eradication_email()` in `app.py`: table layout, inline styles, Outlook-safe) and sends `email_subject` + `email_html`; the flow's Subject and Body are just `triggerBody()?['email_subject']` / `['email_html']`. Change the look in code, not in the flow.
+     - **Agent rule 14:** every answer = bold verdict line, Why, a money-trail table, Gaps, Evidence.
+     - Only dismantle sends the eradication email; filing an STR or closing a case no longer calls the playbook.
+     - Rule 13: the bank clock runs 30x real time, so timestamps can be later than today. The agent flagged them as anomalies until the rule said that's expected.
    - **Observed:** the random background feed occasionally forms a weak 2-account dormant-only ring (confidence insufficient). Harmless, and a good "insufficient evidence" moment, but start the demo from **New Bank**.
 
 18. **Guardrails enforced in code, not the prompt** (18 Oct, demo day; see `AUDIT.md`). Uncommitted at the time of writing.

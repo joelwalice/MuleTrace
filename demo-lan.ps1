@@ -13,6 +13,7 @@ if (-not $Ip) { throw "No Wi-Fi IPv4 address found. Pass one: -Ip <address>" }
 
 $env:NEXT_PUBLIC_API = "http://${Ip}:8000"  # baked into the dashboard at build time
 $env:CORS_ORIGINS = "http://${Ip}:3000,http://localhost:3000"
+$env:DASHBOARD_URL = "http://${Ip}:3000"  # the agent's one-click approve link
 $env:PYTHONUTF8 = "1"
 
 if (-not $SkipBuild) {

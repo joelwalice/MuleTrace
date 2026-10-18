@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AiPanel, CasesSheet, Checklist, CopilotSheet, EvidenceView, PolicySheet, QrSheet, Verdict, isDefaultPolicy } from "./evidence";
+import { InferenceView, useInference } from "./inference";
 import MoneyGraph, { ROLE_TEXT } from "./graph";
 import {
   API, ATTACKS, CASE_STATUS, COPILOT_URL, PATTERN, RISK_BANDS, clock, compactInr, day, get, inr, num, playbookNote, post, riskBand, when,
@@ -12,11 +13,10 @@ import { AccountLink, Kbd, Locked, Nav, NavLink, RoleMark, SelLink, SevGlyph, Se
 type SheetName = "policy" | "copilot" | "cases" | "qr";
 type Signal = { id: number; at: string; sev: Sev | "ok"; text: string };
 type Tab = "rings" | "graph" | "side";
-type Side = "feed" | "evidence" | "profile" | "signals";
+type Side = "feed" | "evidence" | "inferred" | "profile" | "signals";
 type View = "graph" | "table";
 type UrlState = { sel: Sel; acct: string | null; side: Side; view: View; tab: Tab };
-const SIDE_LABEL: Record<Side, string> = { feed: "Live Feed", evidence: "Evidence", profile: "Account", signals: "Log" };
-
+const SIDE_LABEL: Record<Side, string> = { feed: "Live Feed", evidence: "Evidence", inferred: "Inferred", profile: "Account", signals: "Log" };
 // The URL mirrors what's on screen, so any view can be shared, bookmarked or opened in a new tab.
 function toQuery(s: UrlState) {
   const q = new URLSearchParams();
@@ -34,7 +34,7 @@ function readQuery(): Partial<UrlState> {
   return {
     sel: ring ? { kind: "network", id: ring } : alert ? { kind: "alert", id: alert } : null,
     acct: q.get("acct"),
-    side: panel === "profile" || panel === "signals" || panel === "evidence" ? panel : "feed",
+    side: panel === "profile" || panel === "signals" || panel === "evidence" || panel === "inferred" ? panel : "feed",
     view: q.get("view") === "table" ? "table" : "graph",
     tab: tab === "rings" || tab === "side" ? tab : "graph",
   };
@@ -111,6 +111,7 @@ export default function Dashboard() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [graph, setGraph] = useState<Graph | null>(null);
   const [evidence, setEvidence] = useState<Evidence | null>(null);
+  const inference = useInference(sel?.kind === "network" ? sel.id : detail?.network_id, selSig);
   useEffect(() => {
     if (!sel || !selSig) { setDetail(null); setGraph(null); setEvidence(null); return; }
     let live = true;
@@ -238,7 +239,7 @@ export default function Dashboard() {
           <section className={`${panel("graph")} bg-panel`} aria-labelledby="trail-h">
             <GraphToolbar view={view} setView={setView} hasGraph={!!graph} />
             <div className={`relative min-h-[48dvh] flex-1 transition-opacity lg:min-h-[300px] duration-200 ${detailPending && graph ? "opacity-40" : ""}`} aria-busy={detailPending}>
-              <div className={view === "graph" ? "contents" : "hidden"}><MoneyGraph graph={graph} onNode={openAccount} cite={side === "evidence" ? cite : undefined} /></div>
+              <div className={view === "graph" ? "contents" : "hidden"}><MoneyGraph graph={graph} onNode={openAccount} cite={side === "evidence" || side === "inferred" ? cite : undefined} /></div>
               {view === "table" && graph && <TrailTable graph={graph} />}
               {!graph && (sel ? <GraphSkeleton /> : <Watching snap={snap} />)}
               {graph && view === "graph" && <GraphFrame />}
@@ -249,8 +250,8 @@ export default function Dashboard() {
           </section>
           <section className={`${panel("side")} bg-panel`} aria-labelledby="side-h">
             <div className="border-b border-line bg-panel px-3 py-2.5"><Step n={4} id="side-h">Check the Evidence</Step></div>
-            <div className="grid grid-cols-4 gap-px border-b border-line bg-line" role="tablist" aria-label="Side panel">
-              {(["feed", "evidence", "profile", "signals"] as const).map((s) => (
+            <div className="grid grid-cols-5 gap-px border-b border-line bg-line" role="tablist" aria-label="Side panel">
+              {(["feed", "evidence", "inferred", "profile", "signals"] as const).map((s) => (
                 <button key={s} id={`tab-${s}`} role="tab" aria-selected={side === s} aria-controls={`panel-${s}`} onClick={() => setSide(s)}
                   className={`tl bg-panel py-2.5 transition-colors ${side === s ? "text-ink shadow-[inset_0_-2px_0_var(--ink)]" : s === "evidence" && sel ? "text-red hover:text-ink" : "text-muted hover:text-ink"}`}>
                   {SIDE_LABEL[s]}{s === "signals" && signals.length > 0 && <span className="num"> ({signals.length})</span>}
@@ -261,6 +262,8 @@ export default function Dashboard() {
               {side === "feed" ? <Feed snap={snap} />
                 : side === "evidence" ? (sel ? <EvidenceView ev={evidence} pending={evPending} graph={graph} setCite={setCite} openStr={() => setStrOpen(true)} />
                   : <p className="p-4 font-sans text-sm text-ink-2">Select a ring or an alert to see the evidence behind it: the figures the rules computed and the transactions they rest on.</p>)
+                : side === "inferred" ? (sel ? <InferenceView inf={inference} setCite={setCite} />
+                  : <p className="p-4 font-sans text-sm text-ink-2">Select a ring to see what its records cannot show and what has been inferred.</p>)
                 : side === "profile" ? <ProfileView p={profile} acct={acct} ai={acctAi?.account_id === acct ? acctAi : null}
                   setLabel={(v) => setProfile((p) => p && { ...p, label: v })} /> : <Signals signals={signals} />}
             </div>
@@ -614,6 +617,8 @@ function GraphToolbar({ view, setView, hasGraph }: { view: View; setView: (v: Vi
         <li className="flex items-center gap-1.5"><RoleMark role="alerted" />Flagged</li>
         <li className="flex items-center gap-1.5"><RoleMark role="source" />Source, Maybe a Victim</li>
         <li className="flex items-center gap-1.5"><RoleMark role="device" />Shared Phone</li>
+        <li className="flex items-center gap-1.5"><span aria-hidden className="inline-block w-5 border-t-2 border-solid border-ink" />Recorded Transfer</li>
+        <li className="flex items-center gap-1.5"><span aria-hidden className="inline-block w-5 border-t-2 border-dashed border-ink" />Inferred, Not a Transfer</li>
       </ul>
     </div>
   );
@@ -623,7 +628,7 @@ function GraphToolbar({ view, setView, hasGraph }: { view: View; setView: (v: Vi
 function GraphFrame() {
   return (
     <p className="pointer-events-none absolute bottom-2.5 left-3 right-3 font-sans text-[13px] text-ink-2">
-      Money moves left → right in time order. Bigger square = more money. <span className="font-mono text-ink">+9m</span> = how long it sat before moving on.
+      Money moves left → right in time order. Bigger square = more money. <span className="font-mono text-ink">+9m</span> = how long it sat before moving on. Dashed lines are inferences, not recorded transfers.
     </p>
   );
 }

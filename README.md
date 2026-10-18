@@ -10,7 +10,7 @@ For the full change log, design rules and open items, see [`context.md`](context
 
 Everything runs from two processes: the API (`app.py`) and the dashboard (`web/`). You don't run separate scripts for the AI side:
 - **Explainable AI:** the trained classifier is committed in `model/`, and the API loads it on startup. Scores and SHAP reasons are served from the API, and **Cases → Retrain Model** retrains it in-app. `python3 xai.py train` is only for rebuilding `model/` from scratch (see **Checks**).
-- **Copilot Studio:** the API itself is the MCP server (`POST /mcp`, 17 tools). Copilot only needs a public URL for it, which the dev tunnel below provides.
+- **Copilot Studio:** the API itself is the MCP server (`POST /mcp`, 22 tools). Copilot only needs a public URL for it, which the dev tunnel below provides.
 
 ### 1. One-time setup
 ```
@@ -209,7 +209,7 @@ curl -X POST localhost:8000/ingest -H 'content-type: application/json' \
 
 - **Microsoft Foundry (explainable AI):** `foundry/deploy.py` deploys the classifier as a managed online endpoint in your Foundry project. The API then scores through it, falling back to the local model if it's unreachable. See [`foundry/README.md`](foundry/README.md).
 
-- **Copilot Studio:** **Tools → + → Add → Model Context Protocol (MCP)** with server URL `<PUBLIC_URL>/mcp` and no authentication. That adds 17 tools such as `explainAlert`, `traceRingMoney`, `compareAccounts`, `draftRingStr`, `replayPolicy`, `explainAccountRisk` and `proposeDismantle` (the agent has no tool that freezes, files or changes rules; see **Guardrails**); `/mcp` forwards each call to the REST route. Older Copilot Studio layouts can upload `/copilot/openapi.json` as a REST API tool instead. Paste `microsoft/agent-instructions.md` as the instructions. Full steps, including Dev Tunnels, the Dataverse fix for lab tenants and the dashboard embed, are in [`microsoft/README.md`](microsoft/README.md).
+- **Copilot Studio:** **Tools → + → Add → Model Context Protocol (MCP)** with server URL `<PUBLIC_URL>/mcp` and no authentication. That adds 22 tools such as `explainAlert`, `traceRingMoney`, `compareAccounts`, `draftRingStr`, `replayPolicy`, `explainAccountRisk` and `proposeDismantle` (the agent has no tool that freezes, files or changes rules; see **Guardrails**); `/mcp` forwards each call to the REST route. Older Copilot Studio layouts can upload `/copilot/openapi.json` as a REST API tool instead. Paste `microsoft/agent-instructions.md` as the instructions. Full steps, including Dev Tunnels, the Dataverse fix for lab tenants and the dashboard embed, are in [`microsoft/README.md`](microsoft/README.md).
 - **Power BI:** use **Get data → Web** on `/export/alerts.csv` (and `networks`, `transactions`, `accounts`) for live data, or `data/*.csv` for the fixed demo dataset.
 - **Azure:**
   - API on App Service: startup command `uvicorn app:app --host 0.0.0.0`, and set `CORS_ORIGINS` to the web URL.
@@ -297,3 +297,6 @@ cd web && npm run build       # type-check + production build
 - **Styles don't update, or "Failed to load chunk" in dev:** run `cd web && rm -rf .next && npm run dev`. For a production test build next to a running dev server, use `NEXT_DIST_DIR=.next-test npm run build`.
 - **"No signal from the API":** start the API, and check that `NEXT_PUBLIC_API` and `CORS_ORIGINS` match your ports.
 - **Copy the STR:** the STR dialog has **Copy** and **Save .txt**.
+
+## Gaps and inferences
+MuleTrace separates recorded transfers from inferences. It flags where the records begin (first-hop blind spot), searches for possible return-to-origin paths, and scores recency-weighted account closeness. Inferred relationships are dashed in the graph, carry their evidence and limits, and need an analyst's decision. See INFERENCE.md.

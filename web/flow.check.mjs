@@ -23,4 +23,8 @@ const v = flowLayout(nodes, edges, true);
 assert.equal(v.pos.X.y, 630, "vertical mode swaps axes");
 // A cycle must terminate.
 flowLayout([n("P"), n("Q")], [m("c1", "P", "Q", "2026-10-14T09:00:00"), m("c2", "Q", "P", "2026-10-14T09:05:00")]);
+// Inferred edges must never change the layout of recorded money.
+const withGuess = flowLayout(nodes, [...edges, { id: "SE-x", source: "A", target: "X", kind: "suspected" }]);
+assert.deepEqual(withGuess.pos, f.pos, "suspected edges do not move nodes");
+assert.deepEqual(withGuess.delta, f.delta, "suspected edges add no wait times");
 console.log("flow layout check ok");

@@ -12,7 +12,7 @@ Written 18 Oct 2026 (demo day), for the MuleTrace team. Sources: `FSI_Meaningful
 
 **Fixed today (P0, tested: 31/31 checks in `check_guardrails.py`):**
 1. The agent has no consequential tool. `dismantleRing` left the MCP tool list; the agent gets `proposeDismantle`, which only creates a pending proposal. The console shows it, and only an analyst click executes it.
-2. Through the public URL only the 17 Copilot tools, `/mcp` and `/export/*` answer. Everything else returns 403 and is logged.
+2. Through the public URL only the 22 Copilot tools, `/mcp` and `/export/*` answer. Everything else returns 403 and is logged.
 3. A hash-chained audit trail records every agent tool call, proposal, approval, rejection, case action, policy change, retrain and blocked request.
 4. Optional API key for `/mcp`.
 
@@ -29,7 +29,7 @@ Written 18 Oct 2026 (demo day), for the MuleTrace team. Sources: `FSI_Meaningful
 | R3 | Enterprise-grade: governed, secure, trusted, stable, optimised | p.3 | PDF | Judging pillar | Today: action classes, server-side approval, public lockdown, audit chain, guardrail tests | No identity, no DB, in-memory audit. State plainly (§4) |
 | R4 | Human-led, agent-operated; agents execute, humans oversee | p.2, p.4 | PDF | Frontier Firm framing | Agent investigates and proposes; analyst approves | Matches "Phase 2: human-led agents" (p.4). Claim Phase 2, not Phase 3 |
 | R5 | See the whole process: flow, actors, policies, outcomes | p.6 | PDF | Design method | README demo flow; context.md | Add the 8-stage map (§6) to the deck |
-| R6 | Decompose into agent-able jobs with inputs/decisions/outputs | p.6 | PDF | Design method | 17 tools, each bounded with typed inputs | Document the job table (§9) |
+| R6 | Decompose into agent-able jobs with inputs/decisions/outputs | p.6 | PDF | Design method | 22 tools, each bounded with typed inputs | Document the job table (§9) |
 | R7 | Select the starting slice by value × feasibility × data readiness | p.6 | PDF | Scoping | Slice = mule-ring investigation after the alert | Say why: mule rings are the costliest manual work; data is synthetic but shaped like UPI |
 | R8 | Enterprise-ready agent: APIs/events, modular tools, config over code | p.6 | PDF | Extensibility | REST + MCP from one route set; policy as config with replay | Good |
 | R9 | Safety & compliance: identity/permissions, policy/RAG, tracing | p.6 | PDF | Trust | Tracing: audit trail (today). Permissions: action classes (today) | Identity: missing. Policy RAG: missing → Copilot Studio knowledge (P1) |

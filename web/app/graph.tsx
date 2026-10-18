@@ -13,7 +13,8 @@ const COLUMN_TEXT = { sources: "Sources", hop: "Hop", exits: "Exits" } as const;
 // Colours come from the theme tokens. Accounts are squares sized by the money through them; devices are diamonds.
 function sheet(): StylesheetJson {
   const v = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  const [bg, panel, ink, ink2, muted, red, edge, lineHi] = ["--bg", "--panel", "--ink", "--ink-2", "--muted", "--red", "--edge", "--line-hi"].map(v);
+  const [bg, panel, ink, ink2, muted, red, edge, lineHi, amber] = ["--bg", "--panel", "--ink", "--ink-2", "--muted", "--red", "--edge", "--line-hi", "--amber"].map(v);
+  const am = amber || ink2;  // falls back to grey if the theme has no --amber; the dashes carry the meaning either way
   const mono = `${v("--font-plex-mono") || "ui-monospace"}, ui-monospace, monospace`;
   return [
     { selector: "node", style: {
@@ -49,6 +50,8 @@ function sheet(): StylesheetJson {
     { selector: "node.cite", style: { "outline-width": 2, "outline-color": ink, "outline-offset": 4, color: ink } },
     { selector: "edge.fresh", style: { "line-color": red, "target-arrow-color": red, opacity: 1 } },
     { selector: "edge[kind='shared_device']", style: { "line-style": "dashed", "target-arrow-shape": "none", width: 1, "line-color": muted, opacity: 0.55, "curve-style": "straight" } },
+    { selector: "edge[kind='suspected']", style: { "line-style": "dashed", "line-dash-pattern": [6, 4], width: 2, "line-color": am, "target-arrow-color": am,
+        "target-arrow-shape": "triangle", opacity: 0.9, label: "data(dlabel)", color: am } },
     { selector: ".dim", style: { opacity: 0.12 } },
     { selector: "node[role='axis'].dim", style: { opacity: 0.4 } },
   ];
@@ -97,7 +100,9 @@ export default function MoneyGraph({ graph, onNode, cite }: { graph: Graph | nul
       c.on("mouseover", "node[role != 'axis']", (e: EventObject) => {
         if (flowTimer.current) return;
         const n = e.target, p = n.renderedPosition(), d = n.data();
+        const susp = c.edges("[kind='suspected']"); susp.remove();  // "follow the money" must never run through an inference
         const path = n.predecessors().union(n.successors()).union(n);
+        susp.restore();
         c.elements().not(path).not("node[role='axis']").addClass("dim");
         path.edges("[kind='money']").addClass("focus");
         setTip(d.role === "device"
@@ -109,6 +114,12 @@ export default function MoneyGraph({ graph, onNode, cite }: { graph: Graph | nul
         const ed = e.target, p = ed.renderedMidpoint(), d = ed.data();
         ed.addClass("focus");
         setTip({ x: p.x, y: p.y, value: inr(d.amount), unit: "", lines: [`${d.source} → ${d.target}`, when(d.ts), d.wait != null ? `Sent on ${minutes(d.wait).slice(1)} after it arrived` : "First money in"] });
+      });
+      c.on("mouseover", "edge[kind='suspected']", (e: EventObject) => {
+        if (flowTimer.current) return;
+        const ed = e.target, p = ed.renderedMidpoint(), d = ed.data();
+        setTip({ x: p.x, y: p.y, value: Number(d.score).toFixed(2), unit: "inferred closeness",
+                 lines: [`${d.source} ⇢ ${d.target}`, "Not a recorded transfer", `Status: ${d.status}`, "Evidence: Inferred tab"] });
       });
       c.on("mouseout", "node, edge", () => { if (!flowTimer.current) c.elements().removeClass("dim focus"); setTip(null); });
       c.on("viewport", () => setTip(null));
@@ -156,7 +167,8 @@ export default function MoneyGraph({ graph, onNode, cite }: { graph: Graph | nul
         label: `${col.kind === "hop" ? `${COLUMN_TEXT.hop} ${col.depth}` : COLUMN_TEXT[col.kind]}${col.ts ? `\n${clock(col.ts)}` : ""}`.toUpperCase(),
       } })),
       ...graph.edges.map((e) => ({ group: "edges" as const, data: {
-        ...e, wait: flow.delta[e.id] ?? null, dlabel: flow.delta[e.id] != null ? minutes(flow.delta[e.id]) : "",
+        ...e, wait: flow.delta[e.id] ?? null,
+        dlabel: e.kind === "suspected" ? "inferred" : flow.delta[e.id] != null ? minutes(flow.delta[e.id]) : "",
         w: e.kind === "money" ? 1.5 + 6 * (e.amount ?? 0) / maxAmt : 1,
       } })),
     ];

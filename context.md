@@ -192,7 +192,7 @@ cd web && node flow.check.mjs               # graph layout self-check
 - **Benchmark and exports:**
   - `GET /evaluation` reads `data/eval.json`, or returns `status: "not run"`.
   - `GET /export/{accounts|transactions|alerts|networks}.csv` serves the live tables for Power BI.
-- **Copilot Studio tools:** `COPILOT_TOOLS` lists the 17 investigator operations (camelCase `operationId`s).
+- **Copilot Studio tools:** `COPILOT_TOOLS` lists the 22 investigator operations (17 core plus 5 relationship tools from PR #3) (camelCase `operationId`s).
   - `POST /mcp`: MCP over streamable HTTP, stateless JSON responses (initialize, tools/list, tools/call, ping). Tool schemas are generated from the same OpenAPI routes, and each call is forwarded in-process to the REST route, so answers are identical. This is what the current Copilot Studio uses (its **Add tool** dialog offers only MCP and Workflow).
   - `GET /copilot/openapi.json`: the same tools as OpenAPI 3.0, for older layouts with a REST API tool. `servers` comes from `PUBLIC_URL`.
 - **Dismantle:** freezes mules and exits (simulated), sends sources to review, opens a case, and POSTs the case JSON to `PLAYBOOK_WEBHOOK`. The response reports `sent (status)`, `not configured`, or `failed: …`. It runs from the console only; the agent gets `POST /network/{id}/propose-dismantle` (item 18).
@@ -343,7 +343,7 @@ cd web && node flow.check.mjs               # graph layout self-check
 18. **Guardrails enforced in code, not the prompt** (18 Oct, demo day; see `AUDIT.md`). Uncommitted at the time of writing.
    - **Why:** the approval for a freeze depended only on rule 6 of the prompt, and the anonymous tunnel exposed every route. Anyone with the URL could `POST /live/reset` or dismantle a ring.
    - **Action classes:** (1) read-only, (2) a reversible draft or proposal, which the agent may do, and (3) consequential actions (freeze, file, close, policy apply, reset), which happen in the console only.
-   - **Agent tools:** `dismantleRing` was removed from `COPILOT_TOOLS` and replaced by `proposeDismantle`. A proposal is pending and idempotent; the console approves it through Dismantle or rejects it with `POST /proposal/{id}/reject`. A stale `dismantleRing` call over MCP is refused and logged. The tool count stays at 17.
+   - **Agent tools:** `dismantleRing` was removed from `COPILOT_TOOLS` and replaced by `proposeDismantle`. A proposal is pending and idempotent; the console approves it through Dismantle or rejects it with `POST /proposal/{id}/reject`. A stale `dismantleRing` call over MCP is refused and logged. The core tool count stays at 17 (22 with the PR #3 relationship tools).
    - **Public lockdown:** a pure ASGI middleware (so SSE passes through). Through the tunnel or `PUBLIC_URL`, only the Copilot tools, `/mcp` and `/export/*` answer; everything else returns 403 and is audited.
    - **Audit:** an append-only SHA-256 chain that survives New Bank. `GET /audit` reports `intact`.
    - **Optional `MCP_KEY`:** sent as the `x-api-key` or Bearer header.
@@ -379,7 +379,7 @@ cd web && node flow.check.mjs               # graph layout self-check
   1. Instant cloud flow → trigger "When an HTTP request is received" (a **premium** connector), with **Who can trigger** set to **Anyone**. Paste the JSON schema with the case fields: `case_id, network_id, alert_ids[], frozen[], review[], summary, str_draft, status, score, total_in`.
   2. Actions: Outlook email with the STR draft (live in the demo). Teams post and a Planner task due in 7 days where the tenant has them.
   3. Run the API with `PLAYBOOK_WEBHOOK='…'` (`demo-mac.sh` reads it from `.demo.env`).
-- **Copilot Studio:** an MCP tool on `<PUBLIC_URL>/mcp` (17 tools; or a REST API tool from `/copilot/openapi.json` in older layouts), with the instructions in `microsoft/agent-instructions.md`. Embedded via the Demo website channel. See `microsoft/README.md`.
+- **Copilot Studio:** an MCP tool on `<PUBLIC_URL>/mcp` (22 tools; or a REST API tool from `/copilot/openapi.json` in older layouts), with the instructions in `microsoft/agent-instructions.md`. Embedded via the Demo website channel. See `microsoft/README.md`.
 - **Power BI:** use the live `/export/*.csv` through Get data → Web, or the static `data/*.csv` (the canonical demo dataset).
 - **Azure:** API on App Service (`uvicorn app:app --host 0.0.0.0`, set `CORS_ORIGINS`); `web/` on Static Web Apps or App Service, with `NEXT_PUBLIC_API` set at build time.
 

@@ -31,7 +31,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.routing import Match
 
 import muletrace as mt
+import relations as rel
 import xai
+from inference_api import build_router
 from muletrace import inr
 
 TICK = 0.25          # real seconds per tick
@@ -72,6 +74,7 @@ class Live:
         self.frozen, self.cases, self.net_status, self.alert_ids, self.net_ids = set(), [], {}, {}, {}
         self.labels = {}  # account id -> True (confirmed mule) / False (not a mule): analyst feedback for retraining
         self.proposals = {}  # network id -> the agent's dismantle proposal, waiting for an analyst
+        self.suspected = rel.SuspectedStore()  # inferred relationships; never part of self.txns
         self.recompute()
 
     @property
@@ -176,6 +179,7 @@ class Live:
 
 
 LIVE = Live()
+INFERENCE, add_suspected = build_router(LIVE)
 iso = lambda o: o.isoformat() if hasattr(o, "isoformat") else str(o)
 
 
@@ -198,6 +202,7 @@ app = FastAPI(title="MuleTrace", lifespan=lifespan,
               description="AML SOC: mule network detection with time-ordered money trails (INR, FIU-IND STR)")
 app.add_middleware(CORSMiddleware, allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(","),
                    allow_methods=["*"], allow_headers=["*"])
+app.include_router(INFERENCE)
 
 
 def lookup(table, key, what):
@@ -287,10 +292,18 @@ def via_public_url(request):
                 or any(x.endswith(".devtunnels.ms") for x in hosts))
 
 
+def api_routes():
+    """Every route, including those of included routers: newer FastAPI keeps an included router as one wrapper in
+    app.routes (no prefix is used here, so its routes' paths are the real ones)."""
+    for r in app.routes:
+        sub = getattr(r, "original_router", None)
+        yield from (sub.routes if sub else [r])
+
+
 def public_route_allowed(scope):
     if scope["path"] in ("/mcp", "/copilot/openapi.json") or scope["path"].startswith("/export/"):
         return True
-    route = next((r for r in app.routes if r.matches(scope)[0] == Match.FULL), None)
+    route = next((r for r in api_routes() if r.matches(scope)[0] == Match.FULL), None)
     return getattr(route, "operation_id", None) in COPILOT_TOOLS
 
 
@@ -426,7 +439,7 @@ def alert_graph(alert_id: str):
     a = lookup(LIVE.alert_by, alert_id, "alert")
     edges, up, down, lateral = mt.trace(a["account_id"], a["ts"], LIVE.inc, LIVE.out, LIVE.devs)
     role = lambda i: "subject" if i == a["account_id"] else "upstream" if i in up else "downstream" if i in down else "lateral"
-    return graph(edges, mt.device_links({a["account_id"]} | lateral, LIVE.out, LIVE.devs), role)
+    return add_suspected(graph(edges, mt.device_links({a["account_id"]} | lateral, LIVE.out, LIVE.devs), role))
 
 
 @app.get("/alert/{alert_id}", operation_id="draftAlertStr", summary="Alert detail: plain-English explanation, STR draft for FIU-IND and its completeness checklist")
@@ -458,7 +471,7 @@ def alert(alert_id: str):
 def network_graph(network_id: str):
     n = lookup(LIVE.net_by, network_id, "network")
     role = lambda i: "subject" if i in n["alerted"] else "source" if i in n["sources"] else "member"
-    return graph(n["edges"], n["devices"], role)
+    return add_suspected(graph(n["edges"], n["devices"], role))
 
 
 @app.get("/network/{network_id}", operation_id="draftRingStr", summary="Ring summary: sources, mules, exits, STR draft for FIU-IND and its completeness checklist")
@@ -798,7 +811,8 @@ def export_csv(table: Literal["accounts", "transactions", "alerts", "networks"])
 # for the public URL, so adding one would expose it to the internet.
 COPILOT_TOOLS = {"explainAlert", "explainRing", "traceAlertMoney", "traceRingMoney", "compareAccounts", "draftAlertStr",
                  "draftRingStr", "getAccount", "listAlerts", "listRings", "replayPolicy", "getPolicy", "getEvaluation",
-                 "proposeDismantle", "explainAccountRisk", "getModelCard", "listCases"}
+                 "proposeDismantle", "explainAccountRisk", "getModelCard", "listCases",
+                 "explainRingGaps", "traceReturnPaths", "scoreCloseness", "listSuspectedEdges", "getSuspectedEdge"}
 
 
 @app.get("/copilot/openapi.json", include_in_schema=False)
@@ -806,7 +820,7 @@ def copilot_spec(request: Request):
     """OpenAPI 3.0 spec with only the investigator tools, for Copilot Studio (Add tool → REST API)."""
     spec = get_openapi(title="MuleTrace Investigator", version="1.0.0", openapi_version="3.0.3",
                        description="Evidence-grounded AML investigation tools. Every figure comes with the transaction ids it rests on.",
-                       routes=[r for r in app.routes if getattr(r, "operation_id", None) in COPILOT_TOOLS])
+                       routes=[r for r in api_routes() if getattr(r, "operation_id", None) in COPILOT_TOOLS])
     spec["servers"] = [{"url": os.environ.get("PUBLIC_URL") or str(request.base_url).rstrip("/")}]
     return spec
 
@@ -818,7 +832,7 @@ MCP_TOOLS = {}
 
 def mcp_tools():
     if not MCP_TOOLS:
-        spec = get_openapi(title="MuleTrace", version="1.0.0", routes=[r for r in app.routes if getattr(r, "operation_id", None) in COPILOT_TOOLS])
+        spec = get_openapi(title="MuleTrace", version="1.0.0", routes=[r for r in api_routes() if getattr(r, "operation_id", None) in COPILOT_TOOLS])
         schemas = spec.get("components", {}).get("schemas", {})
         for path, ops in spec["paths"].items():
             for method, op in ops.items():

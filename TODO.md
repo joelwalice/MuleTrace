@@ -1,54 +1,34 @@
 # MuleTrace: What's Left Before the Demo
 
-Written 17 Oct 2026 (evening). **Demo day is 18 Oct.** Everything that needs no sign-in is done (see the end of this file). What remains needs someone's account, a team decision, or rehearsal time.
+Written 17 Oct 2026 (evening), updated 18 Oct (demo day). Copilot Studio and Power Automate are now live (see the end of this file). What remains is optional Microsoft pieces, team decisions and rehearsal.
 
-**Rule for tonight:** no new features. Every item below either makes the demo work in the room or keeps the pitch honest.
+**Rule for today:** no new features. Every item below either makes the demo work in the room or keeps the pitch honest.
 
 ---
 
 ## 1. Needs access (someone's sign-in or licence)
 
-Ordered by how much the demo loses without it. Each has a fallback, so none of them can sink the demo.
+The hackathon lab tenant provides Azure credits ($200), M365 E7, Power Platform, Copilot Studio and GitHub Copilot licences. Each item has a fallback, so none of them can sink the demo.
 
-| # | Task | Access needed | Time | If it isn't done |
-|---|---|---|---|---|
-| 1 | **Copilot Studio agent** live and embedded | A **work or school Microsoft account** (Entra ID) with Copilot Studio (trial is fine; personal accounts such as Gmail or Outlook.com usually can't sign up), plus a Microsoft account for **Dev Tunnels** | 1–1.5 h | The Evidence tab's **Ask** buttons answer the same questions from the same endpoints. Skip the "Ask Copilot" beat. |
-| 2 | **Power Automate** playbook (Teams card, Planner, Outlook on Dismantle) | The same work account with **Power Automate Premium** or a trial (the HTTP trigger is a premium connector), plus **Teams** and **Planner** in that tenant | 45 min | The Log tab says "not configured". Show the case audit trail in **Cases** instead. |
-| 3 | **Foundry endpoint** for the classifier | An **Azure subscription** with credit, permission to create a hub-based Foundry project, and VM quota for `Standard_DS2_v2` | 30 min of setup + 10–15 min deploy | The local model is used and the panels say so. Don't claim it runs in Foundry. |
-| 4 | **Power BI** report (optional) | Power BI Desktop (free); publishing needs a Power BI account | 30 min | Skip it. It's not in the 5-minute demo. |
-| 5 | **Push this work to GitHub** | Push rights on `joelwalice/MuleTrace` (owner or collaborator) and a signed-in `gh` or git credential | 5 min | The work exists only on this laptop. |
+| # | Task | Status | If it isn't done |
+|---|---|---|---|
+| 1 | **Copilot Studio agent** live and embedded | ✅ Done 18 Oct (MCP tools, Demo website embed, Teams channel) | The Evidence tab's **Ask** buttons answer the same questions. |
+| 2 | **Power Automate** playbook on Dismantle | ✅ Done 18 Oct (Outlook email with the STR draft; the lab user has no Teams) | The Log tab says "not configured". Show **Cases** instead. |
+| 3 | **Foundry endpoint** for the classifier | Open, optional. Azure credit is available; about 30 min setup + 10–15 min deploy | The local model is used and the panels say so. Don't claim it runs in Foundry. |
+| 4 | **Power BI** report | Open, optional. Power BI Desktop is Windows-only; use the Power BI service on a Mac | Skip it. It's not in the 5-minute demo. |
+| 5 | **Push this work to GitHub** | 17 Oct work merged (PR #2); 18 Oct changes still to push | The work exists only on this laptop. |
 
-### 1.1 Copilot Studio agent (step by step, Windows)
-Full guide: `microsoft/README.md` §1–2. Its install commands are for macOS; on Windows use the ones below.
-1. **Install and sign in to Dev Tunnels** (sign-in opens the browser, so do it yourself):
-   ```
-   winget install Microsoft.devtunnel
-   devtunnel user login
-   devtunnel host -p 8000 --allow-anonymous      # keep this window open; copy the https://…devtunnels.ms URL
-   ```
-2. **Restart the API with that URL**, so the Copilot spec points at it:
-   ```
-   $env:PUBLIC_URL='https://<id>-8000.<region>.devtunnels.ms'; $env:PYTHONUTF8='1'
-   .\.venv\Scripts\python.exe -m uvicorn app:app --host 0.0.0.0 --port 8000
-   ```
-   Check that `<tunnel>/copilot/openapi.json` lists the tunnel URL under `servers`.
-3. **Build the agent** at copilotstudio.microsoft.com:
-   - Instructions: paste `microsoft/agent-instructions.md`. **It was updated today** for the IBM numbers, so paste the new version.
-   - Orchestration: Generative. Turn general knowledge and web search **off**.
-   - Tools: REST API → upload the spec, Authentication **None**, all 14 tools. On **dismantleRing**, require confirmation.
-4. **Test** after launching attacks 1–3: "Why is AL-101 suspicious?", "Draft the STR for NET-1", "How accurate is it?" (it should lead with 7.7× vs 1.7×), "Dismantle NET-1" (it must ask first).
-5. **Publish** with No authentication, copy the Web app iframe `src`, and put it in `web/.env.local` as `NEXT_PUBLIC_COPILOT_URL=…`. Then **rebuild** (`demo-lan.ps1`, without `-SkipBuild`), because the URL is baked in at build time.
-- **The dev tunnel URL changes** each time unless you create a persistent tunnel (`devtunnel create`, then `devtunnel port create -p 8000`, then `devtunnel host <name>`). Do that, or the agent's tools break after a restart.
-
-### 1.2 Power Automate
-Full guide: `README.md` → "Power Automate" and `microsoft/README.md` §3.
-- Flow: **When an HTTP request is received** (Who can trigger: **Anyone**) → Teams card (`microsoft/teams-card.json`) → Planner task due in 7 days → Outlook email with the STR draft.
-- Start the API with `$env:PLAYBOOK_WEBHOOK='<trigger URL>'` in the same window as the other variables. **Never commit this URL**; it contains a key.
-- Test: launch an attack → **Dismantle** → the Log tab should say `sent (202)`, and the card appears in Teams.
+### 1.1 Keeping Copilot and Power Automate working on demo day
+Setup steps: `microsoft/README.md` §1–3. What they depend on:
+- **The dev tunnel** `muletrace` must be hosted (its URL is fixed: `PUBLIC_URL` in `.demo.env`). If it stops, the agent's tools fail.
+- **The webhook URL** must reach the API (`PLAYBOOK_WEBHOOK` in `.demo.env`). Without it, Dismantle says "not configured".
+- **One command does both:** `./demo-mac.sh` (or `--skip-build` when nothing changed). It also builds the dashboard with the Copilot embed URL from `web/.env.local`.
+- **Check before going on:** Ask Copilot → "List the mule rings" answers; Dismantle a test ring → Log says `sent (202)` and the email arrives. Then **New Bank**.
+- **Lab tenant facts:** the agent lives in the default environment "Sandbox Labs - 100036" (Dataverse added, user is System Administrator). The agent's authentication is off and the MCP tool uses the maker's connection, so the embed needs no sign-in.
 
 ### 1.3 Foundry
-Full guide: `foundry/README.md`. On Windows: `winget install Microsoft.AzureCLI`, then `az login`, then
-`python -m venv .venv-azure; .\.venv-azure\Scripts\pip install azure-ai-ml azure-identity`, then `deploy.py`.
+Full guide: `foundry/README.md`. On the Mac, `az` is already installed: `az login`, then
+`python3 -m venv .venv-azure && .venv-azure/bin/pip install azure-ai-ml azure-identity`, then `deploy.py`. Add `FOUNDRY_SCORING_URL` and `FOUNDRY_KEY` to `.demo.env`.
 - The model file is fixed (it was unreadable on Windows before today), so deploy from this laptop or after pulling the fix.
 - **Delete the endpoint after the demo.** It bills by the hour.
 
@@ -61,7 +41,7 @@ Full guide: `foundry/README.md`. On Windows: `winget install Microsoft.AzureCLI`
 | D1 | **The ₹50,000 PAN rule may be out of date.** News reports say the Income-tax Rules, 2026 (from 1 April 2026; reportedly Notification 22/2026, Rules 161–162) replaced Rule 114B's ">₹50,000 cash in one day" test with an annual ₹10 lakh aggregate. Not confirmed against the official notification. | Check incometaxindia.gov.in tonight. If it's confirmed, keep the rule (₹49k deposits are still a classic structuring pattern) but say "the long-standing ₹50,000 PAN threshold" on slides. Don't change code the night before. |
 | D2 | **STR deadline wording.** FIU-IND says "7 working days", RBI circulars for banks say "7 days", both counted from the Principal Officer establishing suspicion. | Say "within 7 days of establishing suspicion". That's true under both. |
 | D3 | **How to present IBM.** The rules alone get 0.9–1.7× lift on IBM, while the classifier retrained on IBM history gets 7.7×. | Lead with 7.7×, and when asked, explain the rules' gap (README → Judge Q&A). Never show the rules-only number as a win. |
-| D4 | **Dev tunnel or Azure App Service** for the public API URL | A persistent dev tunnel. App Service is more work tonight. |
+| D4 | **Dev tunnel or Azure App Service** for the public API URL | ✅ Decided: persistent dev tunnel `muletrace`. |
 | D5 | **Venue Wi-Fi** for judge phones | Use the laptop's own hotspot. Venue Wi-Fi often blocks device-to-device traffic. |
 
 ---
@@ -69,16 +49,17 @@ Full guide: `foundry/README.md`. On Windows: `winget install Microsoft.AzureCLI`
 ## 3. Rehearsal and demo-day checklist (no access needed)
 
 **Tonight**
-- [ ] Run `demo-lan.ps1`, open `/send` on a **real phone** and send a Structuring pattern. Allow the firewall prompt (Private). This step can't be tested from the laptop alone.
+- [ ] Run `./demo-mac.sh`, open `/send` on a **real phone** and send a Structuring pattern. Allow the incoming-connections prompt. This step can't be tested from the laptop alone.
 - [ ] Rehearse the 5-minute script (`README.md` → Demo flow) **3 times** with a timer, on the projector resolution and a phone.
 - [ ] Record a **backup video** of the full flow, in case Wi-Fi or a projector fails.
-- [ ] **5-slide deck:** problem → live demo → explainable AI → Microsoft stack → honest numbers (14 alerts → 3 rings; IBM 7.7× vs 1.7×).
+- [ ] **5-slide deck:** problem → live demo → explainable AI → Microsoft stack (Copilot Studio agent over MCP, Power Automate playbook, Foundry if deployed) → honest numbers (14 alerts → 3 rings; IBM 7.7× vs 1.7×).
 - [ ] Each presenter reads `README.md` → "Claims you can defend" and "Judge Q&A".
 
 **Demo morning (15 minutes before)**
 - [ ] Laptop on charge, sleep off, notifications off, browser zoom 100%.
 - [ ] Hotspot on; phones connected to it.
-- [ ] `demo-lan.ps1 -SkipBuild` running (or the full build if anything changed). Dev tunnel window open if the Copilot is used.
+- [ ] `./demo-mac.sh --skip-build` running (or the full build if anything changed). It hosts the dev tunnel and passes the webhook.
+- [ ] Ask Copilot answers "List the mule rings"; a test Dismantle logs `sent (202)` and the email arrives.
 - [ ] Dashboard: **More → New Bank**, clock **30×**, **Autopilot off**, Accuracy card showing **7.7×**.
 - [ ] **More → Judge Phone QR Code** shows the LAN address, not `localhost`.
 - [ ] One test attack, then **New Bank** again so the demo starts clean.
@@ -93,6 +74,12 @@ Full guide: `foundry/README.md`. On Windows: `winget install Microsoft.AzureCLI`
 - **Production gaps** (say so if asked): no database (cases are lost on restart), no API auth, synthetic training data.
 
 ---
+
+## Done on 18 Oct
+- **Copilot Studio agent live and embedded** (item 1). Persistent dev tunnel `muletrace`. Tools connect through the new `/mcp` endpoint, because Copilot Studio's new layout has no REST API tool; `microsoft/README.md` §2 is updated. Instructions now forbid treating a repeated request as approval. Tested: citations, confidence, ask-before-dismantle, end-user view.
+- **Power Automate playbook** (item 2). HTTP trigger → Outlook email with the case, frozen/review accounts and the STR draft. Teams isn't available to the lab user, so the playbook uses email. Tested: Dismantle → `sent (202)` → email received.
+- `demo-mac.sh`: one command on the Mac for the dev tunnel, the API (with the webhook) and the LAN build. Secrets go in the git-ignored `.demo.env`.
+- Ring STR draft: "Grounds for suspicion" now lists only the patterns that fired (it was fixed text naming every pattern).
 
 ## Done on 17 Oct (evening)
 - IBM AML benchmark run. `eval_ibm.py --ai` trains and tests the classifier on IBM data, and `data/eval.json` is updated.

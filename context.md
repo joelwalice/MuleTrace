@@ -1,8 +1,8 @@
 # MuleTrace: Project Context
 
-Hand-off notes for anyone (person or AI agent) picking up this repo. They cover what was built, why each decision was made, and what is still open. Last updated: 17 Oct 2026, day 2 of the 48-hour hackathon.
+Hand-off notes for anyone (person or AI agent) picking up this repo. They cover what was built, why each decision was made, and what is still open. Last updated: 18 Oct 2026, demo day.
 
-> **Current phase:** the Investigation Copilot from [`plan.md`](plan.md) is built (change log item 10). Microsoft setup steps live in [`microsoft/README.md`](microsoft/README.md).
+> **Current phase:** demo day. The Copilot Studio agent is live (MCP tools, embedded in the dashboard) and the Power Automate playbook emails the STR on Dismantle (change log item 17). Microsoft setup steps live in [`microsoft/README.md`](microsoft/README.md); what's left is in [`TODO.md`](TODO.md).
 
 ## 1. What MuleTrace is
 
@@ -19,9 +19,11 @@ An AML (anti-money-laundering) SOC console that finds **money-mule networks**, n
 
 ```
 muletrace.py   Python engine: synthetic data, detection rules, money trail, ring grouping (stdlib only)
-app.py         FastAPI: live bank engine (feed, attacks, ingest) + SSE stream + REST endpoints + Power Automate webhook
+app.py         FastAPI: live bank engine (feed, attacks, ingest) + SSE stream + REST endpoints + MCP endpoint (/mcp) + Power Automate webhook
 eval_ibm.py    Scores the rules on the public IBM AML dataset (precision / recall / lift, attempt recall) → data/eval.json
 microsoft/     Copilot Studio agent instructions, Teams adaptive card, setup for Dev Tunnels / Copilot Studio / Power Automate / Power BI
+demo-mac.sh    Demo day on macOS: dev tunnel + API (webhook) + LAN production build; secrets from git-ignored .demo.env
+demo-lan.ps1   Same LAN build for Windows (no tunnel/webhook handling)
 data/*.csv     Written on API start, for Power BI
 web/           Next.js 16 (App Router) + Tailwind v4 + cytoscape: the SOC dashboard
   app/dashboard.tsx  page state, URL sync, SSE, panels, keyboard shortcuts, signals log
@@ -49,6 +51,11 @@ cd web && node flow.check.mjs               # graph layout self-check
 | `PLAYBOOK_WEBHOOK` | API | unset | Power Automate "When an HTTP request is received" URL. Keep it secret, never commit it. |
 | `CORS_ORIGINS` | API | `http://localhost:3000` | Dashboard origin(s), comma-separated |
 | `NEXT_PUBLIC_API` | web (build time) | `http://localhost:8000` | API base URL |
+| `PUBLIC_URL` | API | request host | Public tunnel URL; Copilot Studio calls `<PUBLIC_URL>/mcp` |
+| `NEXT_PUBLIC_COPILOT_URL` | web (build time, `web/.env.local`) | unset | Copilot Studio Demo website embed URL; shows **Ask Copilot** |
+| `FOUNDRY_SCORING_URL`, `FOUNDRY_KEY` | API | unset | Score through the Foundry endpoint |
+
+`demo-mac.sh` loads `PUBLIC_URL`, `PLAYBOOK_WEBHOOK`, `TUNNEL` and `FOUNDRY_*` from `.demo.env` (git-ignored).
 
 ## 3. Engine (muletrace.py)
 
@@ -103,8 +110,11 @@ cd web && node flow.check.mjs               # graph layout self-check
 - **Benchmark and exports:**
   - `GET /evaluation` reads `data/eval.json`, or returns `status: "not run"`.
   - `GET /export/{accounts|transactions|alerts|networks}.csv` serves the live tables for Power BI.
-- **Copilot Studio spec:** `GET /copilot/openapi.json` is OpenAPI 3.0 with only the 14 investigator tools, each with a camelCase `operationId`. `servers` comes from `PUBLIC_URL`.
+- **Copilot Studio tools:** `COPILOT_TOOLS` lists the 17 investigator operations (camelCase `operationId`s).
+  - `POST /mcp`: MCP over streamable HTTP, stateless JSON responses (initialize, tools/list, tools/call, ping). Tool schemas are generated from the same OpenAPI routes, and each call is forwarded in-process to the REST route, so answers are identical. This is what the current Copilot Studio uses (its **Add tool** dialog offers only MCP and Workflow).
+  - `GET /copilot/openapi.json`: the same tools as OpenAPI 3.0, for older layouts with a REST API tool. `servers` comes from `PUBLIC_URL`.
 - **Dismantle:** freezes mules and exits (simulated), sends sources to review, opens a case, and POSTs the case JSON to `PLAYBOOK_WEBHOOK`. The response reports `sent (status)`, `not configured`, or `failed: …`.
+- **STR drafts:** the ring draft's "Grounds for suspicion" is built from the patterns that fired (`GROUNDS` in `app.py`), not fixed text.
 
 ## 5. Change log (in order)
 
@@ -236,6 +246,17 @@ cd web && node flow.check.mjs               # graph layout self-check
    - **Repo hygiene:** root `.gitignore` (`.venv/`, `__pycache__/`, `data/ibm/`, `.next-test/`); compiled `.pyc` files untracked.
    - **Remaining work and sign-ins:** `TODO.md`.
 
+17. **Microsoft integrations live** (18 Oct, demo day, in the hackathon lab tenant on a Mac).
+   - **Copilot Studio agent** `MuleTrace Investigator` (Claude Opus 5.5), published with the Demo website and Teams + Microsoft 365 channels, no authentication, embedded in **Ask Copilot**.
+     - The new Copilot Studio has no REST API tool, so `app.py` gained `POST /mcp` (MCP, stateless JSON) exposing the same 17 tools by forwarding to the REST routes.
+     - Lab-tenant hurdles: the default environment had no Dataverse (added in the Power Platform admin center), the user needed the System Administrator role there, web channels stay greyed out until authentication is off, and the MCP tool's Authentication had to change from **End user account** to the maker's, or the embed shows "Connection Required".
+     - Rule 6 tightened after a test where the agent treated a repeated "Dismantle NET-1" as approval: only an explicit yes in the very next message counts. Retested: it asks again on a repeat and acts on "yes".
+     - The "I should…" text seen in testing is the model's collapsed thinking panel, not the answer; the instructions also forbid narrating.
+   - **Power Automate:** HTTP trigger → Outlook **Send an email (V2)** with an HTML body (case, frozen and review accounts, STR draft in a `<pre>`). The lab user had no Teams. Tested: `sent (202)` → email received. HTML must be pasted after switching the body to `</>`, or the tags arrive as text.
+   - **STR grounds fix:** the ring STR always said "rapid pass-through, sub-threshold deposits and shared devices". The agent itself flagged this on a dormant-only ring. It now lists only the patterns that fired.
+   - **`demo-mac.sh`:** tunnel + API + LAN build in one command, secrets in `.demo.env`. Persistent dev tunnel `muletrace`.
+   - **Observed:** the random background feed occasionally forms a weak 2-account dormant-only ring (confidence insufficient). Harmless, and a good "insufficient evidence" moment, but start the demo from **New Bank**.
+
 ## 6. Design rules currently in force (don't regress)
 
 - **Look:** a light analyst workspace (from the `minimalist-ui` skill), replacing the dark terminal look in item 12.
@@ -262,9 +283,9 @@ cd web && node flow.check.mjs               # graph layout self-check
 
 - **Power Automate** (set up in the portal):
   1. Instant cloud flow → trigger "When an HTTP request is received" (a **premium** connector), with **Who can trigger** set to **Anyone**. Paste the JSON schema with the case fields: `case_id, network_id, alert_ids[], frozen[], review[], summary, str_draft, status, score, total_in`.
-  2. Actions: Teams post, a Planner task due in 7 days, and Outlook email.
-  3. Run the API with `PLAYBOOK_WEBHOOK='…'`.
-- **Copilot Studio:** a REST API tool from `/copilot/openapi.json` (14 tools), with the instructions in `microsoft/agent-instructions.md`. See `microsoft/README.md`.
+  2. Actions: Outlook email with the STR draft (live in the demo). Teams post and a Planner task due in 7 days where the tenant has them.
+  3. Run the API with `PLAYBOOK_WEBHOOK='…'` (`demo-mac.sh` reads it from `.demo.env`).
+- **Copilot Studio:** an MCP tool on `<PUBLIC_URL>/mcp` (17 tools; or a REST API tool from `/copilot/openapi.json` in older layouts), with the instructions in `microsoft/agent-instructions.md`. Embedded via the Demo website channel. See `microsoft/README.md`.
 - **Power BI:** use the live `/export/*.csv` through Get data → Web, or the static `data/*.csv` (the canonical demo dataset).
 - **Azure:** API on App Service (`uvicorn app:app --host 0.0.0.0`, set `CORS_ORIGINS`); `web/` on Static Web Apps or App Service, with `NEXT_PUBLIC_API` set at build time.
 
@@ -272,7 +293,7 @@ cd web && node flow.check.mjs               # graph layout self-check
 
 - **IBM AML run done** (item 16). The rules alone barely beat chance on IBM; pitch the retrained classifier's 7.7× and be upfront about the rules.
 - **Foundry endpoint not deployed yet.** It needs an Azure subscription, `az login` and a hub-based Foundry project. See `foundry/README.md`.
-- **Copilot Studio agent not created yet.** It needs a public URL (Dev Tunnel) and the user's Microsoft sign-in. Follow `microsoft/README.md`.
+- **Copilot Studio agent and Power Automate are live** (item 17). They depend on the dev tunnel running and the webhook URL being passed to the API; `demo-mac.sh` handles both.
 - **Facts to verify before the slides:** the STR deadline checks out (7 days from the Principal Officer establishing suspicion; FIU-IND says working days, RBI says days). The **₹50k PAN rule may be out of date:** reports say the Income-tax Rules, 2026 (from 1 April 2026) replaced Rule 114B's daily test with an annual ₹10 lakh aggregate. Unconfirmed against the official notification; see `TODO.md`.
 - **Next dev server stale CSS or "Failed to load chunk":** run `rm -rf .next && npm run dev`. Agents must build with `NEXT_DIST_DIR=.next-test` so they never touch the dev server's `.next`.
 - **Leftover processes:** three uvicorn processes (ports 8765, 8770, 8771) were started inside the agent sandbox and can't be killed, not even with `sudo`. They're harmless and should go away after quitting Claude Code or rebooting.
@@ -293,5 +314,5 @@ cd web && node flow.check.mjs               # graph layout self-check
    - "Why is AL-10x suspicious?" The answer cites `[TX…]` and the graph lights those edges.
    - "Draft the STR." The checklist shows 4 supported and 3 missing items.
    - **Policy:** turn off Structuring → Replay → "Rings 3 → 2, missed NET-x" → Defaults.
-7. **Dismantle Ring → Lock N Accounts.** Sources go to review, and Teams and Planner fire.
+7. **Dismantle Ring → Lock N Accounts** (the fan-in/fan-out ring). Sources go to review, and the playbook emails the STR draft.
 8. **Credibility:** IBM AML lift, and the answer on MuleHunter.AI.
